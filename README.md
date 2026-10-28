@@ -37,7 +37,9 @@ All four sizes (5M, 28M, 123M, 209M) sit on the Pareto front of accuracy versus 
 pip install git+https://github.com/mistralai/timestral.git   # Python >= 3.10, torch >= 2.4
 ```
 
-Or from a clone with [uv](https://docs.astral.sh/uv/), using the versions pinned in `uv.lock`:
+Or from a clone with [uv](https://docs.astral.sh/uv/), using the versions pinned in `uv.lock`.
+This checkout configures PyTorch's CPU-only index in `pyproject.toml`, so syncing does
+not install CUDA dependencies:
 
 ```bash
 git clone https://github.com/mistralai/timestral.git && cd timestral

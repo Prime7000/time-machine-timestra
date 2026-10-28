@@ -11,14 +11,28 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi[standard]>=0.153.0",
     "huggingface_hub>=0.23",
+    "jupyter>=1.1.1",
+    "lab>=8.10",
+    "matplotlib>=3.10.9",
     "numpy>=1.24",
+    "pandas>=2.3.3",
     "safetensors>=0.4",
+    "seaborn>=0.13.2",
     "torch>=2.4",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
