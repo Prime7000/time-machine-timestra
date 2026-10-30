@@ -47,6 +47,26 @@ uv sync --frozen
 source .venv/bin/activate
 ```
 
+## Forecast studio
+
+Run the local HTML, CSS, and JavaScript dashboard from this checkout:
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+Open `http://127.0.0.1:8000`, upload a CSV, choose a numeric column, and select
+history by row number or date. Row numbers in the interface start at 1, and both
+ends of a range are included. Generate a forecast to view the animated chart,
+prediction interval, observed comparisons, and downloadable forecast CSV.
+
+JavaScript derives dates, selected rows, chart labels, and comparisons from the
+raw values returned by `/plot_values` and `/get_date`. The backend only validates
+requests, selects the supplied row range or row indices, and runs Timestral.
+Dates use year-month-day format; regular calendar dates are extended in the
+browser, and irregular series use step labels. Uploads remain disposable and
+replace the previous dataset.
+
 ## Models
 
 The weights are on the Hugging Face Hub, in the Mistral AI organization:

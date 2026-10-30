@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f9fb">
+  <title>Timestral · Forecast studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Timestral home"><span class="brand-icon" aria-hidden="true">▥</span> timestral<span class="brand-divider"></span><span class="brand-subtitle">Forecast studio</span></a>
+    <div class="topbar-right"><span class="model-badge"><span class="status-dot"></span> Timestral 209M</span><a href="/docs" target="_blank" rel="noreferrer" class="api-link">API docs ↗</a></div>
+  </header>
+
+  <main>
+    <div class="page-heading"><div><div class="eyebrow">FROM HISTORY TO WHAT’S NEXT</div><h1>A little foresight.</h1><p>Explore your time series. Choose a window. See what comes next.</p></div><span class="workspace-tag"><span class="tiny-grid" aria-hidden="true">⊞</span> Your forecasting workspace</span></div>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div class="workspace">
+      <aside class="controls">
+        <section class="panel dataset-panel">
+          <div class="section-heading"><h2><span class="step">01</span> Your dataset</h2><button id="clear" class="text-button" disabled>Clear</button></div>
+          <label id="drop-zone" class="drop-zone" for="file-input"><span class="upload-icon" aria-hidden="true">↥</span><strong id="file-name">Drop your CSV here</strong><span id="file-detail">or click to browse files</span><span class="file-format">CSV · numeric time series</span></label>
+          <input id="file-input" type="file" accept=".csv,text/csv" class="visually-hidden">
+          <div id="dataset-summary" class="dataset-summary" hidden><span><span class="status-dot"></span> Dataset ready</span><strong id="row-count">0 rows</strong></div>
+        </section>
+
+        <form id="forecast-form" class="panel settings-panel">
+          <div class="section-heading"><h2><span class="step">02</span> Set up your forecast</h2></div>
+          <fieldset id="settings" disabled>
+            <label for="value-column">Value to predict <span class="field-hint">Numeric</span></label><select id="value-column" required><option value="">Upload a dataset first</option></select>
+            <label for="x-column">Horizontal axis</label><select id="x-column"><option value="">Row number</option></select>
+            <div class="divider"></div>
+            <div class="label-row"><span class="field-label">History window</span><span class="field-hint">Filter by</span></div>
+            <div class="segmented" role="group" aria-label="History filter"><button type="button" id="row-mode" class="active" aria-pressed="true"># &nbsp; Row number</button><button type="button" id="date-mode" aria-pressed="false">▦ &nbsp; Date</button></div>
+            <div id="row-fields" class="field-pair"><div><label for="start-row">From row</label><input id="start-row" type="number" min="1" step="1" value="1" required></div><div><label for="end-row">Through row</label><input id="end-row" type="number" min="1" step="1" value="1" required></div></div>
+            <div id="date-fields" hidden><label for="date-column">Date column</label><select id="date-column"></select><div class="field-pair"><div><label for="start-date">From date</label><input id="start-date" type="date"></div><div><label for="end-date">Through date</label><input id="end-date" type="date"></div></div></div>
+            <p class="helper" id="window-hint">Row numbers start at 1. Both ends are included.</p>
+            <label for="horizon">Forecast horizon <span class="field-hint">Steps ahead</span></label><div class="horizon-input"><input id="horizon" type="number" value="24" min="1" max="1024" step="1" required><span>steps</span></div>
+            <div class="presets" aria-label="Horizon presets"><button type="button" data-horizon="12">12</button><button type="button" data-horizon="24" class="active">24</button><button type="button" data-horizon="48">48</button><button type="button" data-horizon="96">96</button></div>
+            <button id="run" type="submit" class="primary-button"><span aria-hidden="true">✧</span> Generate forecast <span aria-hidden="true">→</span></button>
+            <p class="run-note">Predicts immediately after your selected window.</p>
+          </fieldset>
+        </form>
+        <div class="sidebar-note"><span aria-hidden="true">◈</span><p>One window, many possibilities.<br><span>Earlier windows let you compare predictions with what actually happened.</span></p></div>
+      </aside>
+
+      <div class="results">
+        <section class="panel chart-panel" aria-labelledby="chart-title">
+          <div class="chart-heading"><div><div class="eyebrow">THE BIG PICTURE</div><h2 id="chart-title">Your series, looking ahead</h2><p id="chart-subtitle">Upload a CSV to start exploring.</p></div><div class="chart-tools"><button id="replay" class="icon-button" title="Replay chart animation" aria-label="Replay chart animation" disabled>↻</button><button id="download" class="icon-button" title="Download forecast CSV" aria-label="Download forecast CSV" disabled>↧</button></div></div>
+          <div class="chart-legend"><span><i class="legend-line history"></i>Selected history</span><span><i class="legend-line forecast"></i>Forecast</span><span id="actual-legend" hidden><i class="legend-line actual"></i>Observed</span><label class="band-toggle"><input id="show-band" type="checkbox" checked><i class="legend-band"></i>80% prediction interval</label></div>
+          <div id="chart-wrap" class="chart-wrap"><canvas id="chart" tabindex="0" role="img" aria-label="Upload a dataset to display its history and forecast"></canvas><div id="chart-empty" class="chart-empty"><div class="empty-graphic" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><h3>Every series has a next chapter.</h3><p>Add your data to see the story unfold.</p></div><div id="chart-tooltip" class="chart-tooltip" hidden></div><div id="chart-loading" class="chart-loading" hidden><span class="spinner"></span><strong>Finding what comes next…</strong><span>Running Timestral on your selected history</span></div></div>
+          <div class="chart-footer"><span id="chart-range">No history selected</span><span id="chart-status"><span class="status-dot neutral"></span> Waiting for data</span></div>
+        </section>
+
+        <div class="stats"><article class="panel stat"><span class="stat-label">HISTORY WINDOW <span aria-hidden="true">↔</span></span><strong id="stat-history">—</strong><span id="stat-history-detail">observations selected</span></article><article class="panel stat"><span class="stat-label">LAST OBSERVED <span class="mini-dot"></span></span><strong id="stat-last">—</strong><span id="stat-last-detail">the end of your history</span></article><article class="panel stat"><span class="stat-label">NEXT PREDICTION <span class="mini-dot orange"></span></span><strong id="stat-next">—</strong><span id="stat-next-detail">generate a forecast to see</span></article></div>
+
+        <section class="panel forecast-panel"><div class="table-heading"><div><h2>Beyond the window</h2><p id="table-description">Your forecast, one step at a time.</p></div><span id="forecast-count" class="small-badge">No forecast yet</span></div><div class="table-scroll"><table><thead><tr><th>Step / axis</th><th>Prediction</th><th>Lower · 10%</th><th>Upper · 90%</th><th>Observed</th></tr></thead><tbody id="forecast-rows"><tr><td colspan="5" class="table-empty">Choose your history and generate a forecast. The next steps will appear here.</td></tr></tbody></table></div></section>
+        <p class="footnote"><span aria-hidden="true">ⓘ</span> The shaded interval spans the model’s 10th–90th percentiles. Predictions are estimates; uncertainty grows as you look further ahead.</p>
+      </div>
+    </div>
+    <footer class="page-footer"><span>timestral <span class="muted">/ Forecast studio</span></span><span>Powered by Timestral · Built for a clearer view</span></footer>
+  </main>
+</body>
+</html>
