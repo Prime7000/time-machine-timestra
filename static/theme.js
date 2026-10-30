@@ -1,11 +1,18 @@
 function setTheme(theme, remember = false) {
-  theme = theme === 'dark' ? 'dark' : 'light';
+  if (theme !== 'dark') theme = 'light';
   document.documentElement.dataset.theme = theme;
-  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#121820' : '#f8f9fb';
+  let browserColor = '#f8f9fb';
+  if (theme === 'dark') browserColor = '#121820';
+  document.querySelector('meta[name="theme-color"]').content = browserColor;
   const toggle = document.getElementById('theme-toggle');
   if (toggle) {
-    toggle.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
-    toggle.setAttribute('aria-label', `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`);
+    if (theme === 'dark') {
+      toggle.textContent = '☀ Light';
+      toggle.setAttribute('aria-label', 'Switch to light mode');
+    } else {
+      toggle.textContent = '☾ Dark';
+      toggle.setAttribute('aria-label', 'Switch to dark mode');
+    }
     toggle.setAttribute('aria-pressed', String(theme === 'dark'));
   }
   if (remember) {
@@ -13,9 +20,16 @@ function setTheme(theme, remember = false) {
   }
 }
 
+function toggleTheme() {
+  let nextTheme = 'dark';
+  if (document.documentElement.dataset.theme === 'dark') nextTheme = 'light';
+  setTheme(nextTheme, true);
+}
+
 // Apply before styles load to avoid a bright flash when dark mode is saved.
 let savedTheme;
 try { savedTheme = localStorage.getItem('times-forcast-theme'); } catch { /* Use the system preference. */ }
-setTheme(savedTheme === 'light' || savedTheme === 'dark'
-  ? savedTheme
-  : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+let initialTheme = 'light';
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) initialTheme = 'dark';
+if (savedTheme === 'light' || savedTheme === 'dark') initialTheme = savedTheme;
+setTheme(initialTheme);

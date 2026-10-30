@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#f8f9fb">
   <meta name="description" content="Meet the creator of TimeS forcast and learn how the app helps you explore and forecast time-series data.">
   <title>About · TimeS forcast</title>
-  <script src="/static/theme.js?v=times-forcast"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=helpers">
-  <script src="/static/about.js?v=times-forcast" defer></script>
+  <script src="/static/theme.js?v=readable-code"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=metric-guidance">
+  <script src="/static/about.js?v=readable-code" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -33,6 +33,7 @@
         <article><span class="about-feature-icon" aria-hidden="true">↧</span><h3>Take your results with you</h3><p>View predictions and their bounds in a table, then download them as a CSV. Use light or dark mode while you work.</p></article>
       </div>
       <div class="about-reading"><h3>Reading your forecast</h3><p><strong>Last observed</strong> is the final actual value in your selected history. <strong>Next prediction</strong> is the median forecast for the first step after it. A step follows your data’s sampling interval: for daily data, 24 steps means 24 days.</p><p>The shaded band runs from the forecast’s 10th to 90th percentile. Forecasts are estimates, and the band describes their uncertainty. Future dates are inferred from regular history; irregular series use step labels.</p></div>
+      <div class="about-reading"><h3>Checking accuracy</h3><p>When later observations exist in your uploaded CSV, <strong>MAE</strong> shows the average absolute difference between predictions and actual values. <strong>Closer to 0 is better</strong>; 0 means no error on the evaluated observations. <strong>Within acceptable error</strong> shows the percentage close enough to the actual values under the tolerance you choose. <strong>Closer to 100% is better</strong>; 100% means every evaluated prediction meets your tolerance, while 0% means none do. Meeting the tolerance does not necessarily mean an exact prediction.</p><p>Adjust the acceptable error in the forecast accuracy panel. It uses the same units as your selected value; for humidity expressed as %, use percentage points. The panel reports how many predictions were evaluated and excludes missing values. Without later observations, it cannot calculate these scores.</p></div>
       <p class="about-data-note"><span aria-hidden="true">ⓘ</span> Uploads are processed by the app’s backend. Each new CSV replaces the previous upload; Clear removes the stored upload.</p>
     </section>
 

@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from shutil import copyfileobj
+from math import isfinite
 import pandas as pd
 from timestral import TimestralForecaster
 import torch
@@ -13,9 +14,14 @@ import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+
     model = TimestralForecaster.from_pretrained(
         "./models/Timestral-209M",
-        device="cuda" if torch.cuda.is_available() else "cpu")
+        device=device,
+    )
 
     app.state.ml_model = model
     print("----------model fully loaded--------------")
@@ -38,6 +44,29 @@ class Plot(BaseModel):
     helper_columns: list[str] = Field(default_factory=list)
 
 
+def valid_history(column):
+    """Allow missing cells, but require a number and reject infinities."""
+    found_number = False
+    for number in column.to_list():
+        if pd.isna(number):
+            continue
+        if not isfinite(number):
+            return False
+        found_number = True
+    return found_number
+
+
+def column_values(column):
+    """Turn missing cells and infinities into JSON null values."""
+    column = column.replace([float("inf"), float("-inf")], None)
+    result = []
+    for value in column.to_list():
+        if pd.isna(value):
+            value = None
+        result.append(value)
+    return result
+
+
 @app.get("/")
 def home():
     return FileResponse(Path(__file__).parent / "static/index.html")
@@ -55,14 +84,13 @@ def upload_doc(file: UploadFile):
     if df.empty:
         raise HTTPException(status_code=400, detail="The CSV has no data rows")
 
-    col = list(df.columns)
     allowed_col = []
     plot_against = []
-    for c in col:
-        if pd.api.types.is_numeric_dtype(df[c]):
-            allowed_col.append(c)
+    for column in df.columns:
+        if pd.api.types.is_numeric_dtype(df[column]):
+            allowed_col.append(column)
         else:
-            plot_against.append(c)
+            plot_against.append(column)
     if not allowed_col:
         raise HTTPException(status_code=400, detail="The CSV needs a numeric column")
 
@@ -93,56 +121,81 @@ def plot_values(request: Request, values: Plot, start_num: int | None = None, en
         raise HTTPException(status_code=400, detail="Select a numeric value column")
     if values.x_axis and values.x_axis not in df.columns:
         raise HTTPException(status_code=400, detail=f"X-axis column '{values.x_axis}' was not found")
-    if len(set(values.helper_columns)) != len(values.helper_columns):
-        raise HTTPException(status_code=400, detail="Select each helper column only once")
+    selected_helpers = []
+    for column in values.helper_columns:
+        if column in selected_helpers:
+            raise HTTPException(status_code=400, detail="Select each helper column only once")
+        selected_helpers.append(column)
+
     for column in values.helper_columns:
         if column == values.value:
             raise HTTPException(status_code=400, detail="The value being predicted cannot also be a helper")
-        if column not in df.columns or not pd.api.types.is_numeric_dtype(df[column]):
+        if column not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Helper column '{column}' must be a numeric column in the dataset")
+        if not pd.api.types.is_numeric_dtype(df[column]):
             raise HTTPException(status_code=400, detail=f"Helper column '{column}' must be a numeric column in the dataset")
 
     prediction = []
     lower = []
     upper = []
     if values.prediction is not None:
-        if not 1 <= values.prediction <= 1024:
+        if values.prediction < 1 or values.prediction > 1024:
             raise HTTPException(status_code=400, detail="Prediction must be between 1 and 1024 steps")
         if values.rows is not None:
-            if not values.rows or min(values.rows) < 0 or max(values.rows) >= len(df):
+            if not values.rows:
                 raise HTTPException(status_code=400, detail="Selected rows are outside the dataset")
+            for row in values.rows:
+                if row < 0 or row >= len(df):
+                    raise HTTPException(status_code=400, detail="Selected rows are outside the dataset")
             history = df.iloc[values.rows]
         else:
-            start = start_num if start_num is not None else 0
-            end = end_num if end_num is not None else len(df)
+            start = 0
+            end = len(df)
+            if start_num is not None:
+                start = start_num
+            if end_num is not None:
+                end = end_num
             if start < 0 or start >= end or end > len(df):
                 raise HTTPException(status_code=400, detail="Select a valid row range")
             history = df.iloc[start:end]
         context = history[values.value]
-        if context.isna().all() or context.isin([float("inf"), float("-inf")]).any():
+        if not valid_history(context):
             raise HTTPException(status_code=400, detail="The selected history needs finite numeric values")
 
         past_covariates = None
         if values.helper_columns:
             helpers = history[values.helper_columns]
-            if helpers.isna().all().any() or helpers.isin([float("inf"), float("-inf")]).any().any():
-                raise HTTPException(status_code=400, detail="Each helper needs finite numeric values in the selected history")
+            for column in values.helper_columns:
+                if not valid_history(helpers[column]):
+                    raise HTTPException(status_code=400, detail="Each helper needs finite numeric values in the selected history")
             # Use exactly the same historical rows and order as the target.
-            past_covariates = helpers.to_numpy(dtype=float, copy=True).T[None, :, :]
+            helper_numbers = helpers.to_numpy(dtype=float, copy=True)
+            helper_numbers = helper_numbers.transpose()
+            # Shape: one series, helper columns, history rows.
+            past_covariates = helper_numbers.reshape(1, len(values.helper_columns), len(history))
 
         model = request.app.state.ml_model
+        context_numbers = context.to_numpy(dtype=float, copy=True)
         forecast = model.forecast(
-            context.to_numpy(dtype=float, copy=True),
+            context_numbers,
             prediction_length=values.prediction,
             past_covariates=past_covariates,
         )
-        prediction = forecast.median.flatten().tolist()
-        lower = forecast.quantile(0.1).flatten().tolist()
-        upper = forecast.quantile(0.9).flatten().tolist()
+        median_values = forecast.median
+        median_values = median_values.flatten()
+        prediction = median_values.tolist()
+        lower_values = forecast.quantile(0.1)
+        lower_values = lower_values.flatten()
+        lower = lower_values.tolist()
+        upper_values = forecast.quantile(0.9)
+        upper_values = upper_values.flatten()
+        upper = upper_values.tolist()
 
-    df = df.replace([float("inf"), float("-inf")], None)
-    value = [None if pd.isna(v) else v for v in df[values.value].to_list()]
-    x_axis = df[values.x_axis].to_list() if values.x_axis else list(range(len(df)))
-    x_axis = [None if pd.isna(v) else v for v in x_axis]
+    value = column_values(df[values.value])
+    if values.x_axis:
+        x_axis = column_values(df[values.x_axis])
+    else:
+        x_axis = list(range(len(df)))
     return {
         "value": value,
         "x_axis": x_axis,
@@ -161,7 +214,7 @@ def get(date_col: str):
     df = pd.read_csv(file_path)
     if date_col not in df.columns:
         raise HTTPException(status_code=400, detail="Column was not found")
-    data = [None if pd.isna(v) else v for v in df[date_col].replace([float("inf"), float("-inf")], None).to_list()]
+    data = column_values(df[date_col])
     return {"dates_value": data}
 
 

@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#f8f9fb">
   <meta name="description" content="TimeS forcast turns your time-series CSV data into interactive forecasts.">
   <title>TimeS forcast · Forecast studio</title>
-  <script src="/static/theme.js?v=times-forcast"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=helpers">
-  <script src="/static/app.js?v=helpers" defer></script>
+  <script src="/static/theme.js?v=readable-code"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=metric-guidance">
+  <script src="/static/app.js?v=accuracy" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -69,6 +69,21 @@
         </section>
 
         <div class="stats"><article class="panel stat"><span class="stat-label">HISTORY WINDOW <span aria-hidden="true">↔</span></span><strong id="stat-history">—</strong><span id="stat-history-detail">observations selected</span></article><article class="panel stat"><span class="stat-label">LAST OBSERVED <span class="mini-dot"></span></span><strong id="stat-last">—</strong><span id="stat-last-detail">the end of your history</span></article><article class="panel stat"><span class="stat-label">NEXT PREDICTION <span class="mini-dot orange"></span></span><strong id="stat-next">—</strong><span id="stat-next-detail">generate a forecast to see</span></article></div>
+
+        <section class="panel accuracy-panel" aria-labelledby="accuracy-title">
+          <div class="accuracy-heading">
+            <div><div class="eyebrow">CHECK THE FORECAST</div><h2 id="accuracy-title">How close were the predictions?</h2><span id="accuracy-coverage" class="small-badge">Not evaluated</span></div>
+            <div class="tolerance-control"><label for="error-tolerance">Acceptable error (±)</label><input id="error-tolerance" type="number" min="0" step="any" value="5" aria-describedby="tolerance-help tolerance-error" disabled></div>
+          </div>
+          <p id="tolerance-help" class="accuracy-help">Tolerance uses the selected value’s units. For humidity expressed as %, use percentage points. The default is a starting point you can adjust.</p>
+          <p id="tolerance-error" class="tolerance-error" role="status" hidden>Enter a finite number of 0 or more.</p>
+          <div class="accuracy-results">
+            <article class="accuracy-stat"><h3>MAE · Mean Absolute Error</h3><strong id="metric-mae">—</strong><p class="metric-direction">Lower is better: closer to 0 means smaller errors.</p><p id="metric-mae-detail">Average absolute miss, in the selected value’s units. Lower is better.</p></article>
+            <article class="accuracy-stat"><h3>Within acceptable error</h3><strong id="metric-within">—</strong><p class="metric-direction">Higher is better: closer to 100% means more predictions meet your tolerance.</p><p id="metric-within-detail">The percentage of evaluated predictions close enough to the actual values.</p></article>
+          </div>
+          <p id="accuracy-description" class="accuracy-description" aria-live="polite">Generate a forecast to compare predictions with later observations in your dataset.</p>
+          <p class="accuracy-help">Changing the tolerance updates the percentage immediately. It does not change the predictions or MAE. Missing or non-finite pairs are excluded.</p>
+        </section>
 
         <section class="panel forecast-panel"><div class="table-heading"><div><h2>Beyond the window</h2><p id="table-description">Your forecast, one step at a time.</p></div><span id="forecast-count" class="small-badge">No forecast yet</span></div><div class="table-scroll"><table><thead><tr><th>Step / axis</th><th>Prediction</th><th>Lower · 10%</th><th>Upper · 90%</th><th>Observed</th></tr></thead><tbody id="forecast-rows"><tr><td colspan="5" class="table-empty">Choose your history and generate a forecast. The next steps will appear here.</td></tr></tbody></table></div></section>
         <p class="footnote"><span aria-hidden="true">ⓘ</span> The shaded interval spans the forecast’s 10th–90th percentiles. Predictions are estimates; uncertainty grows as you look further ahead.</p>

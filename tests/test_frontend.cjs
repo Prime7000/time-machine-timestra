@@ -209,3 +209,85 @@ test('switch changes update helper selection and remove a newly selected target'
     vm.runInContext('queuePreview = originalQueuePreview;', context);
   }
 });
+
+test('accuracy uses the supplied MAE example and an inclusive tolerance boundary', () => {
+  const scores = run('forecastAccuracy([78,74,57], [80,70,60], 3)');
+  assert.equal(scores.mae, 3);
+  assert.equal(scores.withinCount, 2);
+  assert.ok(Math.abs(scores.withinRate - 200 / 3) < 1e-10);
+  assert.equal(scores.evaluated, 3);
+  assert.equal(scores.skipped, 0);
+  assert.equal(scores.unavailable, 0);
+  assert.equal(run('forecastAccuracy([78,74,57], [80,70,60], 5).withinRate'), 100);
+});
+
+test('12 acceptable predictions out of 14 produces 85.7 percent', () => {
+  const rate = run('forecastAccuracy(Array(12).fill(78).concat([86,86]), Array(14).fill(80), 5).withinRate');
+  assert.equal(rate.toFixed(1), '85.7');
+});
+
+test('partial horizons use only available finite pairs and report the missing coverage', () => {
+  const scores = run('forecastAccuracy(Array(14).fill(80), [80,null,NaN,Infinity,82,77,80], 2)');
+  assert.equal(scores.mae, 1.25);
+  assert.equal(scores.evaluated, 4);
+  assert.equal(scores.withinCount, 3);
+  assert.equal(scores.withinRate, 75);
+  assert.equal(scores.skipped, 3);
+  assert.equal(scores.unavailable, 7);
+  assert.equal(run('forecastAccuracy([1], [], 5)'), null);
+  assert.equal(run('forecastAccuracy([1,null], [null,5], 5)'), null);
+  assert.equal(run('forecastAccuracy([Infinity,5], [1,5], 0).evaluated'), 1);
+});
+
+test('zero tolerance counts exact matches and invalid tolerances do not change MAE', () => {
+  assert.equal(run('forecastAccuracy([10,12], [10,10], 0).withinRate'), 50);
+  for (const tolerance of ['-1', 'NaN', 'Infinity']) {
+    const scores = run(`forecastAccuracy([10,12], [10,10], ${tolerance})`);
+    assert.equal(scores.mae, 1);
+    assert.equal(scores.withinRate, null);
+    assert.equal(scores.withinCount, null);
+  }
+});
+
+test('editing tolerance updates the displayed percentage without changing predictions or MAE', () => {
+  vm.runInContext(`
+    state.data = {prediction: [78,74,57], actual_value: [80,70,60]};
+    $('value-column').value = 'humidity'; $('error-tolerance').value = '3';
+    updateAccuracy();
+  `, context);
+  assert.equal(elements['metric-mae'].textContent, '3');
+  assert.equal(elements['metric-within'].textContent, '66.7%');
+  assert.equal(elements['accuracy-coverage'].textContent, '3 / 3 evaluated');
+  vm.runInContext("$('error-tolerance').value = '5'; updateAccuracy();", context);
+  assert.equal(elements['metric-mae'].textContent, '3');
+  assert.equal(elements['metric-within'].textContent, '100.0%');
+  assert.deepEqual(run('state.data.prediction'), [78, 74, 57]);
+  vm.runInContext("$('error-tolerance').value = ''; updateAccuracy();", context);
+  assert.equal(elements['metric-mae'].textContent, '3');
+  assert.equal(elements['metric-within'].textContent, '—');
+  assert.equal(elements['tolerance-error'].hidden, false);
+  assert.equal(elements['error-tolerance'].attributes['aria-invalid'], 'true');
+});
+
+test('accuracy clears stale scores and explains when no observations are available', () => {
+  vm.runInContext("state.data = null; $('error-tolerance').value = '5'; updateAccuracy();", context);
+  assert.equal(elements['metric-mae'].textContent, '—');
+  assert.equal(elements['metric-within'].textContent, '—');
+  assert.equal(elements['accuracy-coverage'].textContent, 'Not evaluated');
+  vm.runInContext('state.data = {prediction: [10,11], actual_value: []}; updateAccuracy();', context);
+  assert.equal(elements['metric-mae'].textContent, '—');
+  assert.equal(elements['accuracy-coverage'].textContent, '0 / 2 evaluated');
+  assert.match(elements['accuracy-description'].textContent, /No later observations/);
+});
+
+test('each target gets its starting tolerance and retains its own edited setting', () => {
+  vm.runInContext(`
+    state.metadata = {columns: ['humidity', 'meantemp']}; state.tolerances.clear();
+    $('value-column').value = 'humidity'; setToleranceForTarget();
+  `, context);
+  assert.equal(elements['error-tolerance'].value, '5');
+  vm.runInContext("state.tolerances.set('humidity', 8); $('value-column').value = 'meantemp'; setToleranceForTarget();", context);
+  assert.equal(elements['error-tolerance'].value, '2');
+  vm.runInContext("$('value-column').value = 'humidity'; setToleranceForTarget();", context);
+  assert.equal(elements['error-tolerance'].value, '8');
+});

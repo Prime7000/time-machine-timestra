@@ -1,6 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const state = { metadata: null, data: null, rawColumns: {}, helperColumns: [], mode: 'row', busy: false, hover: null, view: null };
+state.tolerances = new Map();
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
+const metricNumber = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 4 });
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const canvas = $('chart');
 const ctx = canvas.getContext('2d');
@@ -25,7 +27,15 @@ async function api(path, options = {}) {
   const result = await response.json();
   if (!response.ok) {
     const detail = result.detail;
-    throw new Error(Array.isArray(detail) ? detail.map((item) => item.msg).join('; ') : detail || 'The request failed. Please try again.');
+    let message = 'The request failed. Please try again.';
+    if (Array.isArray(detail)) {
+      const messages = [];
+      for (const item of detail) messages.push(item.msg);
+      message = messages.join('; ');
+    } else if (detail) {
+      message = detail;
+    }
+    throw new Error(message);
   }
   return result;
 }
@@ -35,6 +45,7 @@ function setBusy(busy, forecasting = false) {
   $('settings').disabled = busy || !state.metadata;
   $('file-input').disabled = busy;
   $('clear').disabled = busy || !state.metadata;
+  $('error-tolerance').disabled = busy || !state.metadata;
   $('chart-loading').hidden = !forecasting;
   $('run').textContent = forecasting ? 'Generating forecast…' : '✧  Generate forecast  →';
   $('replay').disabled = busy || !state.data;
@@ -68,10 +79,16 @@ async function prepareMetadata(metadata) {
   const dates = [];
   const ranges = {};
   // Date parsing and helper eligibility use raw stored values in the browser.
-  await Promise.all([...metadata.columns, ...metadata.plot_against].map(async (column) => {
-    const result = await api(`/get_date?${new URLSearchParams({ date_col: column })}`);
-    state.rawColumns[column] = result.dates_value;
-  }));
+  const columns = metadata.columns.concat(metadata.plot_against);
+  const requests = [];
+  for (const column of columns) {
+    const query = new URLSearchParams({ date_col: column });
+    requests.push(api(`/get_date?${query}`));
+  }
+  const results = await Promise.all(requests);
+  for (let index = 0; index < columns.length; index++) {
+    state.rawColumns[columns[index]] = results[index].dates_value;
+  }
   for (const column of metadata.plot_against) {
     const parsed = state.rawColumns[column].map(dateValue);
     if (!parsed.length || parsed.some((value) => value === null)) continue;
@@ -88,12 +105,14 @@ async function prepareMetadata(metadata) {
 function setMetadata(metadata, filename = 'Current dataset.csv') {
   state.metadata = metadata;
   state.helperColumns = [];
+  state.tolerances.clear();
   $('multivariable').open = false;
   $('file-name').textContent = filename;
   $('file-detail').textContent = 'Click or drop a CSV to replace';
   $('dataset-summary').hidden = false;
   $('row-count').textContent = `${number.format(metadata.total_rows)} rows`;
   fillSelect($('value-column'), metadata.columns);
+  setToleranceForTarget();
   fillSelect($('x-column'), metadata.all_columns, true);
   fillSelect($('date-column'), metadata.date_col);
   // Prefer a column explicitly named date over other date-like metadata columns.
@@ -113,20 +132,33 @@ function setMetadata(metadata, filename = 'Current dataset.csv') {
 }
 
 function helperChoices(rows) {
-  return (state.metadata?.columns || [])
-    .filter((column) => column !== $('value-column').value)
-    .map((column) => ({
-      column,
-      eligible: rows.some((row) => Number.isFinite(state.rawColumns[column]?.[row])),
-    }));
+  const choices = [];
+  if (!state.metadata) return choices;
+  for (const column of state.metadata.columns) {
+    if (column === $('value-column').value) continue;
+    let eligible = false;
+    const numbers = state.rawColumns[column] || [];
+    for (const row of rows) {
+      if (Number.isFinite(numbers[row])) {
+        eligible = true;
+        break;
+      }
+    }
+    choices.push({ column, eligible });
+  }
+  return choices;
 }
 
 function updateHelperSummary() {
   const count = state.helperColumns.length;
   $('helper-count').textContent = `${count} on`;
-  $('helper-summary').textContent = count
-    ? `${count} historical helper${count === 1 ? '' : 's'} will support the forecast. Collapsing this section keeps your choices.`
-    : 'No helpers selected. Forecasting uses only the value you choose.';
+  if (count === 0) {
+    $('helper-summary').textContent = 'No helpers selected. Forecasting uses only the value you choose.';
+    return;
+  }
+  let noun = 'helpers';
+  if (count === 1) noun = 'helper';
+  $('helper-summary').textContent = `${count} historical ${noun} will support the forecast. Collapsing this section keeps your choices.`;
 }
 
 function renderHelpers() {
@@ -135,7 +167,15 @@ function renderHelpers() {
     try { rows = selectedRows().rows; } catch { /* A valid history window is needed to enable helpers. */ }
   }
   const choices = helperChoices(rows);
-  state.helperColumns = state.helperColumns.filter((column) => choices.some((choice) => choice.column === column && choice.eligible));
+  const eligibleColumns = [];
+  for (const choice of choices) {
+    if (choice.eligible) eligibleColumns.push(choice.column);
+  }
+  const selectedHelpers = [];
+  for (const column of state.helperColumns) {
+    if (eligibleColumns.includes(column)) selectedHelpers.push(column);
+  }
+  state.helperColumns = selectedHelpers;
   const container = $('helper-options');
   container.replaceChildren();
   for (const { column, eligible } of choices) {
@@ -153,9 +193,12 @@ function renderHelpers() {
     toggle.disabled = !eligible;
     if (!eligible) label.title = 'No numeric values in the selected history. Choose a valid history window.';
     toggle.addEventListener('change', () => {
-      state.helperColumns = toggle.checked
-        ? [...state.helperColumns, column]
-        : state.helperColumns.filter((selected) => selected !== column);
+      if (toggle.checked) {
+        state.helperColumns.push(column);
+      } else {
+        const index = state.helperColumns.indexOf(column);
+        if (index !== -1) state.helperColumns.splice(index, 1);
+      }
       updateHelperSummary();
       queuePreview();
     });
@@ -251,33 +294,75 @@ function requestOptions(prediction = null) {
 }
 
 function futureLabels(history, horizon) {
-  const labels = Array.from({ length: horizon }, (_, i) => `Step +${i + 1}`);
-  if (!$('x-column').value && state.mode === 'row') return labels.map((_, i) => history.at(-1) + i + 1);
-  const times = history.map(dateValue);
-  if (times.length < 3 || times.some((value) => value === null)) return labels;
-  const dates = times.map((time) => new Date(time));
+  const labels = [];
+  for (let step = 1; step <= horizon; step++) labels.push(`Step +${step}`);
+  if (!$('x-column').value && state.mode === 'row') {
+    const rowLabels = [];
+    const lastRow = history.at(-1);
+    for (let step = 1; step <= horizon; step++) rowLabels.push(lastRow + step);
+    return rowLabels;
+  }
+
+  const times = [];
+  const dates = [];
+  const months = [];
+  for (const value of history) {
+    const time = dateValue(value);
+    if (time === null) return labels;
+    const date = new Date(time);
+    times.push(time);
+    dates.push(date);
+    months.push(date.getUTCFullYear() * 12 + date.getUTCMonth());
+  }
+  if (times.length < 3) return labels;
+
   const last = dates.at(-1);
-  const months = dates.map((date) => date.getUTCFullYear() * 12 + date.getUTCMonth());
   const monthStep = months[1] - months[0];
-  const monthEnd = (date) => date.getUTCDate() === new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
-  const sameDay = dates.every((date) => date.getUTCDate() === last.getUTCDate());
-  const allMonthEnds = dates.every(monthEnd);
-  const sameTime = dates.every((date) => date.toISOString().slice(11) === last.toISOString().slice(11));
-  const monthly = monthStep > 0 && months.every((month, i) => i === 0 || month - months[i - 1] === monthStep) && (sameDay || allMonthEnds) && sameTime;
   const interval = times[1] - times[0];
-  const regular = interval > 0 && times.every((time, i) => i === 0 || time - times[i - 1] === interval);
+  const lastTimeOfDay = last.toISOString().slice(11);
+  let sameDay = true;
+  let allMonthEnds = true;
+  let sameTime = true;
+  let equalMonthSteps = true;
+  let equalTimeSteps = true;
+
+  for (let index = 0; index < dates.length; index++) {
+    const date = dates[index];
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth();
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    if (date.getUTCDate() !== last.getUTCDate()) sameDay = false;
+    if (date.getUTCDate() !== lastDay) allMonthEnds = false;
+    if (date.toISOString().slice(11) !== lastTimeOfDay) sameTime = false;
+    if (index > 0) {
+      if (months[index] - months[index - 1] !== monthStep) equalMonthSteps = false;
+      if (times[index] - times[index - 1] !== interval) equalTimeSteps = false;
+    }
+  }
+
+  const monthly = monthStep > 0 && equalMonthSteps && (sameDay || allMonthEnds) && sameTime;
+  const regular = interval > 0 && equalTimeSteps;
   if (!monthly && !regular) return labels;
-  return labels.map((_, i) => {
+
+  const lastLabel = history.at(-1);
+  const includesTime = typeof lastLabel === 'string' && /[T ]\d{2}:/.test(lastLabel);
+  const dateLabels = [];
+  for (let step = 1; step <= horizon; step++) {
     let next;
     if (monthly) {
       next = new Date(last);
       next.setUTCDate(1);
-      next.setUTCMonth(last.getUTCMonth() + monthStep * (i + 1));
+      next.setUTCMonth(last.getUTCMonth() + monthStep * step);
       const end = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
-      next.setUTCDate(allMonthEnds ? end : Math.min(last.getUTCDate(), end));
-    } else next = new Date(times.at(-1) + interval * (i + 1));
-    return typeof history.at(-1) === 'string' && /[T ]\d{2}:/.test(history.at(-1)) ? next.toISOString() : next.toISOString().slice(0, 10);
-  });
+      if (allMonthEnds) next.setUTCDate(end);
+      else next.setUTCDate(Math.min(last.getUTCDate(), end));
+    } else {
+      next = new Date(times.at(-1) + interval * step);
+    }
+    if (includesTime) dateLabels.push(next.toISOString());
+    else dateLabels.push(next.toISOString().slice(0, 10));
+  }
+  return dateLabels;
 }
 
 function chartData(raw, selection) {
@@ -298,6 +383,102 @@ function chartData(raw, selection) {
     prediction_x_axis: future,
     actual_value: following.slice(0, horizon).map((row) => raw.value[row]),
   };
+}
+
+function setToleranceForTarget() {
+  const column = $('value-column').value;
+  if (!state.metadata) {
+    $('error-tolerance').value = '5';
+    return;
+  }
+  if (!state.tolerances.has(column)) {
+    let startingError = 5;
+    const name = column.toLowerCase();
+    if (name === 'meantemp') startingError = 2;
+    if (name === 'wind_speed' || name === 'meanpressure') startingError = 3;
+    state.tolerances.set(column, startingError);
+  }
+  $('error-tolerance').value = String(state.tolerances.get(column));
+}
+
+function forecastAccuracy(predictions, actualValues, tolerance) {
+  const available = Math.min(predictions.length, actualValues.length);
+  const validTolerance = Number.isFinite(tolerance) && tolerance >= 0;
+  let totalError = 0;
+  let evaluated = 0;
+  let within = 0;
+
+  for (let index = 0; index < available; index++) {
+    const predicted = predictions[index];
+    const actual = actualValues[index];
+    if (!Number.isFinite(predicted)) continue;
+    if (!Number.isFinite(actual)) continue;
+
+    const error = Math.abs(predicted - actual);
+    totalError += error;
+    evaluated += 1;
+    if (validTolerance && error <= tolerance) within += 1;
+  }
+  if (evaluated === 0) return null;
+
+  let withinRate = null;
+  let withinCount = null;
+  if (validTolerance) {
+    withinRate = within / evaluated * 100;
+    withinCount = within;
+  }
+  return {
+    mae: totalError / evaluated,
+    withinRate,
+    withinCount,
+    evaluated,
+    skipped: available - evaluated,
+    unavailable: predictions.length - available,
+  };
+}
+
+function updateAccuracy() {
+  const input = $('error-tolerance');
+  let tolerance = Number.NaN;
+  if (input.value.trim() !== '') tolerance = Number(input.value);
+  const validTolerance = Number.isFinite(tolerance) && tolerance >= 0;
+  input.setAttribute('aria-invalid', String(!validTolerance));
+  $('tolerance-error').hidden = validTolerance;
+
+  $('metric-mae').textContent = '—';
+  $('metric-within').textContent = '—';
+  $('metric-mae-detail').textContent = 'Average absolute miss, in the selected value’s units. Lower is better.';
+  $('metric-within-detail').textContent = 'The percentage of evaluated predictions close enough to the actual values.';
+  $('accuracy-coverage').textContent = 'Not evaluated';
+  $('accuracy-description').textContent = 'Generate a forecast to compare predictions with later observations in your dataset.';
+  const data = state.data;
+  if (!data || data.prediction.length === 0) return;
+
+  $('accuracy-coverage').textContent = `0 / ${data.prediction.length} evaluated`;
+  if (data.actual_value.length === 0) {
+    $('accuracy-description').textContent = 'No later observations are available to check this forecast. End the history earlier in your dataset to compare predictions with actual values.';
+    return;
+  }
+  const scores = forecastAccuracy(data.prediction, data.actual_value, tolerance);
+  if (!scores) {
+    $('accuracy-description').textContent = 'No finite actual/predicted pairs are available to evaluate. Choose a history window followed by numeric observations.';
+    return;
+  }
+
+  const column = $('value-column').value;
+  $('metric-mae').textContent = metricNumber.format(scores.mae);
+  $('metric-mae-detail').textContent = `Average absolute miss for ${column}. Zero means no error on the evaluated observations.`;
+  $('accuracy-coverage').textContent = `${scores.evaluated} / ${data.prediction.length} evaluated`;
+  if (validTolerance) {
+    $('metric-within').textContent = `${scores.withinRate.toFixed(1)}%`;
+    $('metric-within-detail').textContent = `${scores.withinCount} of ${scores.evaluated} predictions were within ±${metricNumber.format(tolerance)} of the actual values.`;
+  } else {
+    $('metric-within-detail').textContent = 'Enter a valid acceptable error to calculate the percentage. MAE does not depend on this setting.';
+  }
+  let description = `Compared with ${scores.evaluated} later observations for ${column}. Scores describe this forecast window.`;
+  if (scores.unavailable > 0) description += ` ${scores.unavailable} forecast steps have no later observations.`;
+  if (scores.skipped > 0) description += ` ${scores.skipped} pairs with missing or non-finite values were skipped.`;
+  $('accuracy-description').textContent = description;
 }
 
 async function loadPlot(forecasting = false) {
@@ -371,14 +552,21 @@ function updateResults() {
   $('stat-next-detail').textContent = data?.prediction.length ? `first of ${data.prediction.length} forecast steps` : 'generate a forecast to see';
   $('forecast-count').textContent = data?.prediction.length ? `${data.prediction.length} steps ahead` : 'No forecast yet';
   $('chart-title').textContent = data ? `${$('value-column').value}, looking ahead` : 'Your series, looking ahead';
-  $('chart-subtitle').textContent = data
-    ? `${number.format(data.selected_rows)} observations · ${$('x-column').value || 'Row number'} axis · ${state.helperColumns.length} historical helpers · Steps equally spaced`
-    : state.metadata ? 'Choose a valid window to preview your history.' : 'Upload a CSV to start exploring.';
+  let subtitle = 'Upload a CSV to start exploring.';
+  if (state.metadata) subtitle = 'Choose a valid window to preview your history.';
+  if (data) {
+    const axis = $('x-column').value || 'Row number';
+    subtitle = `${number.format(data.selected_rows)} observations · ${axis} axis · ${state.helperColumns.length} historical helpers · Steps equally spaced`;
+  }
+  $('chart-subtitle').textContent = subtitle;
   $('chart-range').textContent = data ? `${data.x_axis[0] ?? '—'} → ${data.x_axis.at(-1) ?? '—'}` : 'No history selected';
   $('chart-status').replaceChildren();
   const dot = document.createElement('span');
   dot.className = `status-dot${data ? '' : ' neutral'}`;
-  $('chart-status').append(dot, data?.prediction.length ? 'Forecast complete' : data ? 'History preview' : 'Waiting for data');
+  let status = 'Waiting for data';
+  if (data) status = 'History preview';
+  if (data?.prediction.length) status = 'Forecast complete';
+  $('chart-status').append(dot, status);
   canvas.setAttribute('aria-label', data
     ? `${$('value-column').value}: ${data.selected_rows} history observations, last value ${format(last)}. ${data.prediction.length} forecast steps. First prediction ${format(data.prediction[0])}. Forecast values and bounds are in the table below.`
     : 'Upload a dataset to display its history and forecast');
@@ -408,6 +596,7 @@ function updateResults() {
   $('table-description').textContent = data?.actual_value.length
     ? 'Compare predictions with later observations in your dataset.'
     : 'Your forecast, one step at a time.';
+  updateAccuracy();
   drawChart();
 }
 
@@ -533,8 +722,16 @@ function drawChart(progress = 1) {
   low -= padding;
   high += padding;
   const total = data ? data.value.length + data.prediction.length : 10;
-  const x = (index) => total === 1 ? (plot.left + plot.right) / 2 : plot.left + (index - view.start) / Math.max(view.end - view.start, 1) * (plot.right - plot.left);
-  const y = (value) => plot.bottom - (value - low) / (high - low) * (plot.bottom - plot.top);
+  function x(index) {
+    if (total === 1) return (plot.left + plot.right) / 2;
+    const visibleSpan = Math.max(view.end - view.start, 1);
+    const position = (index - view.start) / visibleSpan;
+    return plot.left + position * (plot.right - plot.left);
+  }
+  function y(value) {
+    const position = (value - low) / (high - low);
+    return plot.bottom - position * (plot.bottom - plot.top);
+  }
   chartGeometry = { ...plot, x, y, total, view };
   ctx.font = '10px "DM Sans", sans-serif';
   ctx.textBaseline = 'middle';
@@ -557,7 +754,9 @@ function drawChart(progress = 1) {
   const ticks = Math.min(width < 450 ? 3 : 5, last - first + 1);
   for (let tick = 0; tick < ticks; tick++) {
     const index = ticks === 1 ? first : Math.round(first + (last - first) * tick / (ticks - 1));
-    ctx.textAlign = tick === 0 ? 'left' : tick === ticks - 1 ? 'right' : 'center';
+    ctx.textAlign = 'center';
+    if (tick === 0) ctx.textAlign = 'left';
+    else if (tick === ticks - 1) ctx.textAlign = 'right';
     ctx.fillStyle = color('tick');
     let label = String(labels[index] ?? '—');
     if (/^\d{4}-\d{2}-\d{2}/.test(label)) label = label.slice(0, 10);
@@ -665,8 +864,24 @@ function downloadForecast() {
     return `"${text.replaceAll('"', '""')}"`;
   }
   const rows = [['axis', 'prediction', 'lower_10_percent', 'upper_90_percent', 'observed']];
-  data.prediction.forEach((value, i) => rows.push([data.prediction_x_axis[i], value, data.lower[i], data.upper[i], data.actual_value[i]]));
-  const url = URL.createObjectURL(new Blob([rows.map((row) => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  for (let index = 0; index < data.prediction.length; index++) {
+    rows.push([
+      data.prediction_x_axis[index],
+      data.prediction[index],
+      data.lower[index],
+      data.upper[index],
+      data.actual_value[index],
+    ]);
+  }
+  const lines = [];
+  for (const row of rows) {
+    const cells = [];
+    for (const value of row) cells.push(csvCell(value));
+    lines.push(cells.join(','));
+  }
+  const csv = lines.join('\r\n');
+  const file = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(file);
   const link = document.createElement('a');
   link.href = url; link.download = 'times-forcast.csv'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -688,7 +903,11 @@ for (const mode of ['row', 'date']) $(`${mode}-mode`).addEventListener('click', 
   renderHelpers();
   queuePreview();
 });
-for (const id of ['value-column', 'x-column', 'start-row', 'end-row', 'start-date', 'end-date']) $(id).addEventListener('change', () => { renderHelpers(); queuePreview(); });
+for (const id of ['value-column', 'x-column', 'start-row', 'end-row', 'start-date', 'end-date']) $(id).addEventListener('change', () => {
+  if (id === 'value-column') setToleranceForTarget();
+  renderHelpers();
+  queuePreview();
+});
 $('date-column').addEventListener('change', () => { setDateBounds(); $('x-column').value = $('date-column').value; renderHelpers(); queuePreview(); });
 function horizonChanged() {
   for (const button of document.querySelectorAll('[data-horizon]')) button.classList.toggle('active', button.dataset.horizon === $('horizon').value);
@@ -703,6 +922,8 @@ $('clear').addEventListener('click', async () => {
   try {
     await api('/clear', { method: 'POST' });
     state.metadata = null; state.data = null; state.rawColumns = {}; state.helperColumns = [];
+    state.tolerances.clear();
+    setToleranceForTarget();
     $('file-name').textContent = 'Drop your CSV here';
     $('file-detail').textContent = 'or click to browse files';
     $('dataset-summary').hidden = true;
@@ -719,6 +940,14 @@ $('clear').addEventListener('click', async () => {
 $('show-band').addEventListener('change', () => { cancelAnimationFrame(animationFrame); drawChart(); });
 $('replay').addEventListener('click', () => { state.hover = null; $('chart-tooltip').hidden = true; animateChart(); });
 $('download').addEventListener('click', downloadForecast);
+$('error-tolerance').addEventListener('input', () => {
+  const value = $('error-tolerance').value;
+  const tolerance = Number(value);
+  if (value.trim() !== '' && Number.isFinite(tolerance) && tolerance >= 0) {
+    state.tolerances.set($('value-column').value, tolerance);
+  }
+  updateAccuracy();
+});
 $('zoom-in').addEventListener('click', () => zoomChart(0.65));
 $('zoom-out').addEventListener('click', () => zoomChart(1 / 0.65));
 $('pan-left').addEventListener('click', () => panChart(-0.25));
@@ -753,7 +982,9 @@ canvas.addEventListener('wheel', (event) => {
   const position = event.clientX - rect.left;
   if (position < chartGeometry.left || position > chartGeometry.right || event.clientY - rect.top < chartGeometry.top || event.clientY - rect.top > chartGeometry.bottom) return;
   event.preventDefault();
-  const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
+  let pixels = event.deltaY;
+  if (event.deltaMode === 1) pixels *= 16;
+  else if (event.deltaMode === 2) pixels *= rect.height;
   zoomChart(Math.exp(Math.max(-0.7, Math.min(0.7, pixels * 0.002))), (position - chartGeometry.left) / (chartGeometry.right - chartGeometry.left));
 }, { passive: false });
 
@@ -825,7 +1056,7 @@ canvas.addEventListener('keydown', (event) => {
 new ResizeObserver(() => drawChart()).observe($('chart-wrap'));
 
 $('theme-toggle').addEventListener('click', () => {
-  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+  toggleTheme();
   cancelAnimationFrame(animationFrame);
   drawChart();
 });

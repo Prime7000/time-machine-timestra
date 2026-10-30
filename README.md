@@ -66,6 +66,15 @@ are disabled. Enabled helpers use the same historical rows as the target;
 future helper values are never supplied. Collapsing the section keeps the
 toggles selected. Leave every toggle off for a forecast using only the target.
 
+The **How close were the predictions?** panel reports MAE and the percentage
+within an adjustable acceptable error. Both scores compare predictions with
+later observed values already in the uploaded CSV. End the history before the
+last row to leave observations for evaluation. The panel shows how many forecast
+steps could be checked and skips missing or non-finite pairs. Adjusting the
+tolerance changes the percentage immediately without rerunning the forecast;
+it does not change MAE. Tolerances use each target's units and are remembered
+per column until the dataset is replaced or cleared.
+
 Scroll over the chart or pinch to zoom, then drag to pan. The controls above the
 chart and the Earlier/Later slider also navigate the visible range. **Forecast**
 focuses on the prediction and recent history; **Reset view**, double-click, or
