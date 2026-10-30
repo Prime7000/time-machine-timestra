@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { metadata: null, data: null, rawColumns: {}, mode: 'row', busy: false, hover: null };
+const state = { metadata: null, data: null, rawColumns: {}, mode: 'row', busy: false, hover: null, view: null };
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const canvas = $('chart');
@@ -7,6 +7,8 @@ const ctx = canvas.getContext('2d');
 let previewTimer;
 let animationFrame;
 let chartGeometry;
+const chartPointers = new Map();
+let chartGesture;
 
 function format(value) {
   return value === null || value === undefined ? '—' : number.format(value);
@@ -38,6 +40,7 @@ function setBusy(busy, forecasting = false) {
   $('replay').disabled = busy || !state.data;
   $('download').disabled = busy || !state.data?.prediction.length;
   $('forecast-form').setAttribute('aria-busy', String(busy));
+  updateChartNavigation();
 }
 
 function fillSelect(element, columns, includeRows = false) {
@@ -167,7 +170,7 @@ function requestOptions(prediction = null) {
     params.set('start_num', selection.rows[0]);
     params.set('end_num', selection.rows.at(-1) + 1);
   }
-  if (prediction && selection.rows.length > 32768) throw new Error('Select at most 32,768 history rows for this model.');
+  if (prediction && selection.rows.length > 32768) throw new Error('Select at most 32,768 history rows for a forecast.');
   return {
     selection,
     path: `/plot_values?${params}`,
@@ -287,6 +290,10 @@ async function upload(file) {
 
 function updateResults() {
   const data = state.data;
+  state.view = null;
+  chartPointers.clear();
+  chartGesture = null;
+  canvas.classList.remove('dragging');
   state.hover = null;
   $('chart-tooltip').hidden = true;
   $('chart-empty').hidden = !!data;
@@ -353,7 +360,83 @@ function animateChart() {
   animationFrame = requestAnimationFrame(frame);
 }
 
+function clampChartView(start, end, total) {
+  const last = Math.max(0, total - 1);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return { start: 0, end: last };
+  const span = Math.min(last, Math.max(Math.min(4, last), end - start));
+  start = Math.max(0, Math.min(last - span, start));
+  return { start, end: start + span };
+}
+
+function chartView() {
+  const total = state.data ? state.data.value.length + state.data.prediction.length : 0;
+  return clampChartView(state.view?.start ?? 0, state.view?.end ?? total - 1, total);
+}
+
+function setChartView(start, end) {
+  if (!state.data || state.busy) return;
+  const total = state.data.value.length + state.data.prediction.length;
+  state.view = clampChartView(start, end, total);
+  state.hover = null;
+  $('chart-tooltip').hidden = true;
+  cancelAnimationFrame(animationFrame);
+  drawChart();
+}
+
+function zoomChart(factor, anchor = 0.5) {
+  const view = chartView();
+  const span = view.end - view.start;
+  const total = state.data ? state.data.value.length + state.data.prediction.length : 0;
+  const nextSpan = Math.min(Math.max(0, total - 1), Math.max(Math.min(4, total - 1), span * factor));
+  const start = view.start + span * anchor - nextSpan * anchor;
+  setChartView(start, start + nextSpan);
+}
+
+function panChart(fraction) {
+  const view = chartView();
+  const shift = (view.end - view.start) * fraction;
+  setChartView(view.start + shift, view.end + shift);
+}
+
+function resetChartView() {
+  const total = state.data ? state.data.value.length + state.data.prediction.length : 0;
+  setChartView(0, total - 1);
+}
+
+function focusForecast() {
+  if (!state.data?.prediction.length) return;
+  const history = state.data.value.length;
+  const horizon = state.data.prediction.length;
+  setChartView(Math.max(0, history - Math.max(5, horizon)), history + horizon - 1);
+}
+
+function updateChartNavigation() {
+  const total = state.data ? state.data.value.length + state.data.prediction.length : 0;
+  const view = chartView();
+  const span = view.end - view.start;
+  const disabled = !state.data || state.busy;
+  const full = span >= total - 1;
+  $('zoom-in').disabled = disabled || span <= 4;
+  $('zoom-out').disabled = disabled || full;
+  $('reset-view').disabled = disabled || full;
+  $('pan-left').disabled = disabled || view.start <= 0;
+  $('pan-right').disabled = disabled || view.end >= total - 1;
+  $('focus-forecast').disabled = disabled || !state.data?.prediction.length;
+  $('chart-position').disabled = disabled || full;
+  $('chart-position').max = Math.max(0, total - 1 - span);
+  $('chart-position').value = view.start;
+  $('chart-position').setAttribute('aria-valuetext', total ? `Observations ${Math.ceil(view.start) + 1} through ${Math.floor(view.end) + 1} of ${total}` : 'No observations');
+  $('zoom-level').textContent = total > 1 ? `${Number(((total - 1) / span).toFixed(1))}×` : '1×';
+  canvas.dataset.zoomed = String(!full && !!state.data);
+  if (state.data) {
+    const labels = [...state.data.x_axis, ...state.data.prediction_x_axis];
+    $('chart-range').textContent = `${labels[Math.ceil(view.start)] ?? '—'} → ${labels[Math.floor(view.end)] ?? '—'}`;
+  }
+}
+
 function drawChart(progress = 1) {
+  const styles = getComputedStyle(document.documentElement);
+  const color = (name) => styles.getPropertyValue(`--chart-${name}`).trim();
   const rect = canvas.getBoundingClientRect();
   const width = rect.width;
   const height = rect.height;
@@ -366,14 +449,17 @@ function drawChart(progress = 1) {
   ctx.clearRect(0, 0, width, height);
   const plot = { left: 54, right: width - 22, top: 25, bottom: height - 41 };
   const data = state.data;
+  const view = chartView();
+  updateChartNavigation();
   let low = Infinity;
   let high = -Infinity;
   if (data) {
-    const series = [data.value, data.prediction, data.actual_value];
-    if ($('show-band').checked) series.push(data.lower, data.upper);
-    for (const values of series) {
-      for (const value of values) {
-        if (value === null) continue;
+    const series = [[data.value, 0], [data.prediction, data.value.length], [data.actual_value, data.value.length]];
+    if ($('show-band').checked) series.push([data.lower, data.value.length], [data.upper, data.value.length]);
+    for (const [values, offset] of series) {
+      for (let i = Math.max(0, Math.floor(view.start) - offset); i <= Math.min(values.length - 1, Math.ceil(view.end) - offset); i++) {
+        const value = values[i];
+        if (value === null || !Number.isFinite(value)) continue;
         low = Math.min(low, value);
         high = Math.max(high, value);
       }
@@ -384,30 +470,32 @@ function drawChart(progress = 1) {
   low -= padding;
   high += padding;
   const total = data ? data.value.length + data.prediction.length : 10;
-  const x = (index) => plot.left + index / Math.max(total - 1, 1) * (plot.right - plot.left);
+  const x = (index) => total === 1 ? (plot.left + plot.right) / 2 : plot.left + (index - view.start) / Math.max(view.end - view.start, 1) * (plot.right - plot.left);
   const y = (value) => plot.bottom - (value - low) / (high - low) * (plot.bottom - plot.top);
-  chartGeometry = { ...plot, x, y, total };
+  chartGeometry = { ...plot, x, y, total, view };
   ctx.font = '10px "DM Sans", sans-serif';
   ctx.textBaseline = 'middle';
   for (let tick = 0; tick <= 4; tick++) {
     const value = low + (high - low) * tick / 4;
     const position = y(value);
-    ctx.strokeStyle = '#eef1f4';
+    ctx.strokeStyle = color('grid');
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 4]);
     ctx.beginPath(); ctx.moveTo(plot.left, position); ctx.lineTo(plot.right, position); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#a6aeb8'; ctx.textAlign = 'right';
+    ctx.fillStyle = color('tick'); ctx.textAlign = 'right';
     ctx.fillText(compact.format(value), plot.left - 12, position);
   }
   if (!data) return;
   const historyLength = data.value.length;
   const labels = [...data.x_axis, ...data.prediction_x_axis];
-  const ticks = width < 450 ? 3 : 5;
+  const first = Math.ceil(view.start);
+  const last = Math.floor(view.end);
+  const ticks = Math.min(width < 450 ? 3 : 5, last - first + 1);
   for (let tick = 0; tick < ticks; tick++) {
-    const index = Math.round((total - 1) * tick / (ticks - 1));
+    const index = ticks === 1 ? first : Math.round(first + (last - first) * tick / (ticks - 1));
     ctx.textAlign = tick === 0 ? 'left' : tick === ticks - 1 ? 'right' : 'center';
-    ctx.fillStyle = '#a6aeb8';
+    ctx.fillStyle = color('tick');
     let label = String(labels[index] ?? '—');
     if (/^\d{4}-\d{2}-\d{2}/.test(label)) label = label.slice(0, 10);
     if (label.length > 14) label = `${label.slice(0, 12)}…`;
@@ -417,25 +505,27 @@ function drawChart(progress = 1) {
   ctx.beginPath(); ctx.rect(plot.left - 2, plot.top - 8, (plot.right - plot.left + 4) * progress, plot.bottom - plot.top + 16); ctx.clip();
   if (data.prediction.length) {
     const boundary = x(historyLength - 1);
-    ctx.fillStyle = '#fffbf7'; ctx.fillRect(boundary, plot.top, plot.right - boundary, plot.bottom - plot.top);
-    ctx.strokeStyle = '#edcdb7'; ctx.setLineDash([4, 4]);
+    const forecastStart = Math.max(plot.left, Math.min(plot.right, boundary));
+    ctx.fillStyle = color('shade'); ctx.fillRect(forecastStart, plot.top, plot.right - forecastStart, plot.bottom - plot.top);
+    ctx.strokeStyle = color('boundary'); ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.moveTo(boundary, plot.top); ctx.lineTo(boundary, plot.bottom); ctx.stroke(); ctx.setLineDash([]);
-    if (plot.right - boundary > 65) {
-      ctx.font = '9px "DM Sans", sans-serif'; ctx.fillStyle = '#c29c80'; ctx.textAlign = 'left'; ctx.fillText('FORECAST →', boundary + 10, plot.top + 7);
+    if (plot.right - forecastStart > 65) {
+      ctx.font = '9px "DM Sans", sans-serif'; ctx.fillStyle = color('label'); ctx.textAlign = 'left'; ctx.fillText('FORECAST →', forecastStart + 10, plot.top + 7);
     }
     if ($('show-band').checked) {
-      // Fill each finite run separately so missing model outputs never become zeros.
-      let start = 0;
-      while (start < data.prediction.length) {
-        while (start < data.prediction.length && (data.lower[start] === null || data.upper[start] === null)) start++;
+      // Fill each finite run separately so missing forecast values never become zeros.
+      let start = Math.max(0, Math.floor(view.start) - historyLength);
+      const limit = Math.min(data.prediction.length, Math.ceil(view.end) - historyLength + 1);
+      while (start < limit) {
+        while (start < limit && (data.lower[start] === null || data.upper[start] === null)) start++;
         let end = start;
-        while (end < data.prediction.length && data.lower[end] !== null && data.upper[end] !== null) end++;
+        while (end < limit && data.lower[end] !== null && data.upper[end] !== null) end++;
         if (end > start) {
           ctx.beginPath();
           ctx.moveTo(x(historyLength + start), y(data.upper[start]));
           for (let i = start + 1; i < end; i++) ctx.lineTo(x(historyLength + i), y(data.upper[i]));
           for (let i = end - 1; i >= start; i--) ctx.lineTo(x(historyLength + i), y(data.lower[i]));
-          ctx.closePath(); ctx.fillStyle = '#edab7630'; ctx.fill();
+          ctx.closePath(); ctx.fillStyle = color('band'); ctx.fill();
         }
         start = end + 1;
       }
@@ -446,30 +536,32 @@ function drawChart(progress = 1) {
     ctx.setLineDash(dashed ? [4, 4] : []);
     let drawing = false;
     // At most two points per display pixel, while preserving gaps.
-    const stride = Math.max(1, Math.floor(values.length / (width * 2)));
-    for (let i = 0; i < values.length; i++) {
+    const start = Math.max(0, Math.floor(view.start) - offset);
+    const end = Math.min(values.length - 1, Math.ceil(view.end) - offset);
+    const stride = Math.max(1, Math.floor((end - start) / (width * 2)));
+    for (let i = start; i <= end; i++) {
       if (values[i] === null) { drawing = false; continue; }
-      if (drawing && i % stride !== 0 && i !== values.length - 1 && values[i + 1] !== null) continue;
+      if (drawing && i % stride !== 0 && i !== end && values[i + 1] !== null) continue;
       if (drawing) ctx.lineTo(x(i + offset), y(values[i]));
       else { ctx.moveTo(x(i + offset), y(values[i])); drawing = true; }
     }
     ctx.stroke(); ctx.setLineDash([]);
-    if (values.length === 1 && values[0] !== null) {
+    if (values.length === 1 && values[0] !== null && offset >= view.start && offset <= view.end) {
       ctx.beginPath(); ctx.arc(x(offset), y(values[0]), 3, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
     }
   }
-  line(data.value, 0, '#59798d');
-  if (data.prediction.length) line([data.value.at(-1), ...data.prediction], historyLength - 1, '#e58a50');
-  if (data.actual_value.length) line([data.value.at(-1), ...data.actual_value], historyLength - 1, '#68a18e', true);
+  line(data.value, 0, color('history'));
+  if (data.prediction.length) line([data.value.at(-1), ...data.prediction], historyLength - 1, color('forecast'));
+  if (data.actual_value.length) line([data.value.at(-1), ...data.actual_value], historyLength - 1, color('actual'), true);
   ctx.restore();
-  if (state.hover !== null && progress === 1) {
+  if (state.hover !== null && state.hover >= view.start && state.hover <= view.end && progress === 1) {
     const index = state.hover;
     const value = index < historyLength ? data.value[index] : data.prediction[index - historyLength];
-    ctx.strokeStyle = '#b5bec8'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = color('hover'); ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(x(index), plot.top); ctx.lineTo(x(index), plot.bottom); ctx.stroke(); ctx.setLineDash([]);
     if (value !== null) {
       ctx.beginPath(); ctx.arc(x(index), y(value), 4, 0, Math.PI * 2);
-      ctx.fillStyle = index < historyLength ? '#59798d' : '#e58a50'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = color(index < historyLength ? 'history' : 'forecast'); ctx.fill(); ctx.strokeStyle = color('outline'); ctx.lineWidth = 2; ctx.stroke();
     }
   }
 }
@@ -513,7 +605,7 @@ function downloadForecast() {
   data.prediction.forEach((value, i) => rows.push([data.prediction_x_axis[i], value, data.lower[i], data.upper[i], data.actual_value[i]]));
   const url = URL.createObjectURL(new Blob([rows.map((row) => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
-  link.href = url; link.download = 'timestral-forecast.csv'; link.click();
+  link.href = url; link.download = 'times-forcast.csv'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
@@ -561,22 +653,116 @@ $('clear').addEventListener('click', async () => {
 $('show-band').addEventListener('change', () => { cancelAnimationFrame(animationFrame); drawChart(); });
 $('replay').addEventListener('click', () => { state.hover = null; $('chart-tooltip').hidden = true; animateChart(); });
 $('download').addEventListener('click', downloadForecast);
-canvas.addEventListener('pointermove', (event) => {
-  if (!state.data || !chartGeometry) return;
-  const position = event.clientX - canvas.getBoundingClientRect().left;
-  const index = Math.round((position - chartGeometry.left) / (chartGeometry.right - chartGeometry.left) * (chartGeometry.total - 1));
-  showTooltip(Math.max(0, Math.min(chartGeometry.total - 1, index)));
+$('zoom-in').addEventListener('click', () => zoomChart(0.65));
+$('zoom-out').addEventListener('click', () => zoomChart(1 / 0.65));
+$('pan-left').addEventListener('click', () => panChart(-0.25));
+$('pan-right').addEventListener('click', () => panChart(0.25));
+$('reset-view').addEventListener('click', resetChartView);
+$('focus-forecast').addEventListener('click', focusForecast);
+$('chart-position').addEventListener('input', (event) => {
+  const view = chartView();
+  const start = Number(event.target.value);
+  setChartView(start, start + view.end - view.start);
 });
+
+function chartIndexAt(position) {
+  const view = chartView();
+  const fraction = (position - chartGeometry.left) / (chartGeometry.right - chartGeometry.left);
+  return Math.max(Math.ceil(view.start), Math.min(Math.floor(view.end), Math.round(view.start + fraction * (view.end - view.start))));
+}
+
+function beginChartGesture() {
+  const points = [...chartPointers.values()];
+  if (!points.length) { chartGesture = null; canvas.classList.remove('dragging'); return; }
+  chartGesture = {
+    view: chartView(),
+    center: points.length > 1 ? (points[0].x + points[1].x) / 2 : points[0].x,
+    distance: points.length > 1 ? Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)) : 0,
+  };
+}
+
+canvas.addEventListener('wheel', (event) => {
+  if (!state.data || state.busy || !chartGeometry) return;
+  const rect = canvas.getBoundingClientRect();
+  const position = event.clientX - rect.left;
+  if (position < chartGeometry.left || position > chartGeometry.right || event.clientY - rect.top < chartGeometry.top || event.clientY - rect.top > chartGeometry.bottom) return;
+  event.preventDefault();
+  const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
+  zoomChart(Math.exp(Math.max(-0.7, Math.min(0.7, pixels * 0.002))), (position - chartGeometry.left) / (chartGeometry.right - chartGeometry.left));
+}, { passive: false });
+
+canvas.addEventListener('pointerdown', (event) => {
+  if (!state.data || state.busy || !chartGeometry || event.button !== 0) return;
+  const rect = canvas.getBoundingClientRect();
+  const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  if (point.x < chartGeometry.left || point.x > chartGeometry.right || point.y < chartGeometry.top || point.y > chartGeometry.bottom) return;
+  canvas.focus({ preventScroll: true });
+  canvas.setPointerCapture(event.pointerId);
+  chartPointers.set(event.pointerId, point);
+  beginChartGesture();
+  state.hover = null;
+  $('chart-tooltip').hidden = true;
+});
+
+canvas.addEventListener('pointermove', (event) => {
+  if (!state.data || state.busy || !chartGeometry) return;
+  const rect = canvas.getBoundingClientRect();
+  const position = event.clientX - rect.left;
+  if (chartPointers.has(event.pointerId) && chartGesture) {
+    chartPointers.set(event.pointerId, { x: position, y: event.clientY - rect.top });
+    const points = [...chartPointers.values()];
+    const center = points.length > 1 ? (points[0].x + points[1].x) / 2 : points[0].x;
+    const distance = points.length > 1 ? Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)) : 0;
+    if (Math.abs(center - chartGesture.center) < 3 && points.length === 1 && !canvas.classList.contains('dragging')) return;
+    canvas.classList.add('dragging');
+    const view = chartGesture.view;
+    const span = view.end - view.start;
+    const scale = chartGesture.distance && distance ? chartGesture.distance / distance : 1;
+    const total = state.data.value.length + state.data.prediction.length;
+    const nextSpan = clampChartView(0, span * scale, total).end;
+    const width = chartGeometry.right - chartGeometry.left;
+    const anchor = view.start + span * (chartGesture.center - chartGeometry.left) / width;
+    const start = anchor - nextSpan * (center - chartGeometry.left) / width;
+    setChartView(start, start + nextSpan);
+  } else if (event.pointerType !== 'touch') showTooltip(chartIndexAt(position));
+});
+
+function endChartGesture(event) {
+  if (!chartPointers.has(event.pointerId)) return;
+  const tap = chartPointers.size === 1 && !canvas.classList.contains('dragging') && event.type === 'pointerup';
+  chartPointers.delete(event.pointerId);
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  beginChartGesture();
+  if (tap && state.data) showTooltip(chartIndexAt(event.clientX - canvas.getBoundingClientRect().left));
+}
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(event, endChartGesture);
+canvas.addEventListener('dblclick', resetChartView);
 function hideTooltip() { state.hover = null; $('chart-tooltip').hidden = true; drawChart(); }
-canvas.addEventListener('pointerleave', hideTooltip);
+canvas.addEventListener('pointerleave', () => { if (!chartPointers.size) hideTooltip(); });
 canvas.addEventListener('blur', hideTooltip);
 canvas.addEventListener('keydown', (event) => {
-  if (!state.data || !['ArrowLeft', 'ArrowRight', 'Escape'].includes(event.key)) return;
+  if (!state.data || state.busy || !['ArrowLeft', 'ArrowRight', 'Escape', '+', '=', '-', '_', 'Home'].includes(event.key)) return;
   event.preventDefault();
   if (event.key === 'Escape') return hideTooltip();
-  showTooltip(Math.max(0, Math.min(chartGeometry.total - 1, (state.hover ?? 0) + (event.key === 'ArrowRight' ? 1 : -1))));
+  if (event.key === 'Home') return resetChartView();
+  if (['+', '='].includes(event.key)) return zoomChart(0.65);
+  if (['-', '_'].includes(event.key)) return zoomChart(1 / 0.65);
+  if (event.shiftKey) return panChart(event.key === 'ArrowRight' ? 0.25 : -0.25);
+  const view = chartView();
+  const index = Math.max(0, Math.min(chartGeometry.total - 1, (state.hover ?? Math.ceil(view.start)) + (event.key === 'ArrowRight' ? 1 : -1)));
+  if (index < view.start || index > view.end) {
+    const start = index < view.start ? index : index - (view.end - view.start);
+    setChartView(start, start + view.end - view.start);
+  }
+  showTooltip(index);
 });
 new ResizeObserver(() => drawChart()).observe($('chart-wrap'));
 
+$('theme-toggle').addEventListener('click', () => {
+  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+  cancelAnimationFrame(animationFrame);
+  drawChart();
+});
+setTheme(document.documentElement.dataset.theme);
 setBusy(false);
 drawChart();

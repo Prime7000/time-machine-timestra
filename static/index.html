@@ -4,14 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f8f9fb">
-  <title>Timestral · Forecast studio</title>
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="/static/app.js" defer></script>
+  <meta name="description" content="TimeS forcast turns your time-series CSV data into interactive forecasts.">
+  <title>TimeS forcast · Forecast studio</title>
+  <script src="/static/theme.js?v=times-forcast"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=times-forcast">
+  <script src="/static/app.js?v=times-forcast" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Timestral home"><span class="brand-icon" aria-hidden="true">▥</span> timestral<span class="brand-divider"></span><span class="brand-subtitle">Forecast studio</span></a>
-    <div class="topbar-right"><span class="model-badge"><span class="status-dot"></span> Timestral 209M</span><a href="/docs" target="_blank" rel="noreferrer" class="api-link">API docs ↗</a></div>
+    <a class="brand" href="/" aria-label="TimeS forcast home"><span class="brand-icon" aria-hidden="true">▥</span> TimeS forcast<span class="brand-divider"></span><span class="brand-subtitle">Forecast studio</span></a>
+    <div class="topbar-right"><a href="/static/about.html" class="header-link">About</a><button id="theme-toggle" type="button" class="theme-toggle" aria-label="Switch to dark mode" aria-pressed="false">☾ Dark</button><a href="/docs" target="_blank" rel="noreferrer" class="api-link">API docs ↗</a></div>
   </header>
 
   <main>
@@ -50,17 +52,23 @@
         <section class="panel chart-panel" aria-labelledby="chart-title">
           <div class="chart-heading"><div><div class="eyebrow">THE BIG PICTURE</div><h2 id="chart-title">Your series, looking ahead</h2><p id="chart-subtitle">Upload a CSV to start exploring.</p></div><div class="chart-tools"><button id="replay" class="icon-button" title="Replay chart animation" aria-label="Replay chart animation" disabled>↻</button><button id="download" class="icon-button" title="Download forecast CSV" aria-label="Download forecast CSV" disabled>↧</button></div></div>
           <div class="chart-legend"><span><i class="legend-line history"></i>Selected history</span><span><i class="legend-line forecast"></i>Forecast</span><span id="actual-legend" hidden><i class="legend-line actual"></i>Observed</span><label class="band-toggle"><input id="show-band" type="checkbox" checked><i class="legend-band"></i>80% prediction interval</label></div>
-          <div id="chart-wrap" class="chart-wrap"><canvas id="chart" tabindex="0" role="img" aria-label="Upload a dataset to display its history and forecast"></canvas><div id="chart-empty" class="chart-empty"><div class="empty-graphic" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><h3>Every series has a next chapter.</h3><p>Add your data to see the story unfold.</p></div><div id="chart-tooltip" class="chart-tooltip" hidden></div><div id="chart-loading" class="chart-loading" hidden><span class="spinner"></span><strong>Finding what comes next…</strong><span>Running Timestral on your selected history</span></div></div>
+          <div class="chart-navigation" role="group" aria-label="Chart navigation">
+            <div class="navigation-buttons"><button id="zoom-out" type="button" title="Zoom out (−)" aria-label="Zoom out" disabled>−</button><output id="zoom-level" aria-label="Zoom level">1×</output><button id="zoom-in" type="button" title="Zoom in (+)" aria-label="Zoom in" disabled>+</button><span class="navigation-divider"></span><button id="pan-left" type="button" title="Move earlier (Shift + Left)" aria-label="Move to earlier observations" disabled>←</button><button id="pan-right" type="button" title="Move later (Shift + Right)" aria-label="Move to later observations" disabled>→</button></div>
+            <div class="navigation-buttons"><button id="focus-forecast" type="button" class="navigation-label" disabled>Forecast</button><button id="reset-view" type="button" class="navigation-label" title="Show the full series (Home or double-click)" disabled>Reset view</button></div>
+          </div>
+          <div id="chart-wrap" class="chart-wrap"><canvas id="chart" tabindex="0" role="img" aria-describedby="chart-help" aria-label="Upload a dataset to display its history and forecast"></canvas><div id="chart-empty" class="chart-empty"><div class="empty-graphic" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><h3>Every series has a next chapter.</h3><p>Add your data to see the story unfold.</p></div><div id="chart-tooltip" class="chart-tooltip" hidden></div><div id="chart-loading" class="chart-loading" hidden><span class="spinner"></span><strong>Finding what comes next…</strong><span>Generating a forecast from your selected history</span></div></div>
+          <div class="chart-position"><span>Earlier</span><input id="chart-position" type="range" min="0" max="0" step="any" value="0" aria-label="Pan through the series" disabled><span>Later</span></div>
+          <p id="chart-help" class="chart-help">Scroll or pinch to zoom · Drag to pan · Double-click to reset · + / − to zoom, Shift + arrows to pan</p>
           <div class="chart-footer"><span id="chart-range">No history selected</span><span id="chart-status"><span class="status-dot neutral"></span> Waiting for data</span></div>
         </section>
 
         <div class="stats"><article class="panel stat"><span class="stat-label">HISTORY WINDOW <span aria-hidden="true">↔</span></span><strong id="stat-history">—</strong><span id="stat-history-detail">observations selected</span></article><article class="panel stat"><span class="stat-label">LAST OBSERVED <span class="mini-dot"></span></span><strong id="stat-last">—</strong><span id="stat-last-detail">the end of your history</span></article><article class="panel stat"><span class="stat-label">NEXT PREDICTION <span class="mini-dot orange"></span></span><strong id="stat-next">—</strong><span id="stat-next-detail">generate a forecast to see</span></article></div>
 
         <section class="panel forecast-panel"><div class="table-heading"><div><h2>Beyond the window</h2><p id="table-description">Your forecast, one step at a time.</p></div><span id="forecast-count" class="small-badge">No forecast yet</span></div><div class="table-scroll"><table><thead><tr><th>Step / axis</th><th>Prediction</th><th>Lower · 10%</th><th>Upper · 90%</th><th>Observed</th></tr></thead><tbody id="forecast-rows"><tr><td colspan="5" class="table-empty">Choose your history and generate a forecast. The next steps will appear here.</td></tr></tbody></table></div></section>
-        <p class="footnote"><span aria-hidden="true">ⓘ</span> The shaded interval spans the model’s 10th–90th percentiles. Predictions are estimates; uncertainty grows as you look further ahead.</p>
+        <p class="footnote"><span aria-hidden="true">ⓘ</span> The shaded interval spans the forecast’s 10th–90th percentiles. Predictions are estimates; uncertainty grows as you look further ahead.</p>
       </div>
     </div>
-    <footer class="page-footer"><span>timestral <span class="muted">/ Forecast studio</span></span><span>Powered by Timestral · Built for a clearer view</span></footer>
+    <footer class="page-footer"><span>TimeS forcast <span class="muted">/ Forecast studio</span></span><span><a href="/static/about.html">About the app &amp; author</a></span></footer>
   </main>
 </body>
 </html>

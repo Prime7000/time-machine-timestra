@@ -47,9 +47,9 @@ uv sync --frozen
 source .venv/bin/activate
 ```
 
-## Forecast studio
+## TimeS forcast
 
-Run the local HTML, CSS, and JavaScript dashboard from this checkout:
+Run the TimeS forcast HTML, CSS, and JavaScript dashboard from this checkout:
 
 ```bash
 uv run uvicorn main:app --reload
@@ -59,6 +59,12 @@ Open `http://127.0.0.1:8000`, upload a CSV, choose a numeric column, and select
 history by row number or date. Row numbers in the interface start at 1, and both
 ends of a range are included. Generate a forecast to view the animated chart,
 prediction interval, observed comparisons, and downloadable forecast CSV.
+
+Scroll over the chart or pinch to zoom, then drag to pan. The controls above the
+chart and the Earlier/Later slider also navigate the visible range. **Forecast**
+focuses on the prediction and recent history; **Reset view**, double-click, or
+the Home key restores the full series. With the chart focused, use +/− to zoom
+and Shift + arrow keys to pan. The vertical axis follows the visible values.
 
 JavaScript derives dates, selected rows, chart labels, and comparisons from the
 raw values returned by `/plot_values` and `/get_date`. The backend only validates

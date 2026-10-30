@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f9fb">
+  <meta name="description" content="Meet the creator of TimeS forcast and learn how the app helps you explore and forecast time-series data.">
+  <title>About · TimeS forcast</title>
+  <script src="/static/theme.js?v=times-forcast"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=times-forcast">
+  <script src="/static/about.js?v=times-forcast" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="TimeS forcast home"><span class="brand-icon" aria-hidden="true">▥</span> TimeS forcast<span class="brand-divider"></span><span class="brand-subtitle">Forecast studio</span></a>
+    <nav class="topbar-right" aria-label="Main navigation"><a href="/" class="header-link">Studio</a><a href="/static/about.html" class="header-link" aria-current="page">About</a><button id="theme-toggle" type="button" class="theme-toggle" aria-label="Switch to dark mode" aria-pressed="false">☾ Dark</button></nav>
+  </header>
+
+  <main class="about-main">
+    <section class="about-intro" aria-labelledby="about-title">
+      <div class="eyebrow">THE APP &amp; THE PERSON BEHIND IT</div>
+      <h1 id="about-title">A clearer view of<br>what comes next.</h1>
+      <p>TimeS forcast is a workspace for exploring your data, choosing the history that matters, and looking ahead with time-series forecasts.</p>
+      <div class="about-actions"><a class="about-primary-link" href="/">Open forecast studio <span aria-hidden="true">→</span></a><a class="header-link" href="#author">Meet the author <span aria-hidden="true">↘</span></a></div>
+    </section>
+
+    <section id="app" class="panel about-app" aria-labelledby="app-title">
+      <div class="about-section-title"><span class="step">01</span><div><div class="eyebrow">ABOUT THE APP</div><h2 id="app-title">Your data. Your window. Your forecast.</h2></div></div>
+      <p>Start with a CSV containing a numeric series. Choose the value to predict, select a history window by row number or date, and set how many steps you want to forecast. TimeS forcast estimates what follows that window.</p>
+      <div class="about-features">
+        <article><span class="about-feature-icon" aria-hidden="true">▦</span><h3>Choose your history</h3><p>Work with the full series or focus on a range. Row numbers start at 1, and both ends of your selection are included.</p></article>
+        <article><span class="about-feature-icon" aria-hidden="true">↗</span><h3>Explore every detail</h3><p>Zoom, pan, and inspect the animated chart. Focus on the forecast or compare it with later observations already in your dataset.</p></article>
+        <article><span class="about-feature-icon" aria-hidden="true">↧</span><h3>Take your results with you</h3><p>View predictions and their bounds in a table, then download them as a CSV. Use light or dark mode while you work.</p></article>
+      </div>
+      <div class="about-reading"><h3>Reading your forecast</h3><p><strong>Last observed</strong> is the final actual value in your selected history. <strong>Next prediction</strong> is the median forecast for the first step after it. A step follows your data’s sampling interval: for daily data, 24 steps means 24 days.</p><p>The shaded band runs from the forecast’s 10th to 90th percentile. Forecasts are estimates, and the band describes their uncertainty. Future dates are inferred from regular history; irregular series use step labels.</p></div>
+      <p class="about-data-note"><span aria-hidden="true">ⓘ</span> Uploads are processed by the app’s backend. Each new CSV replaces the previous upload; Clear removes the stored upload.</p>
+    </section>
+
+    <section id="author" class="panel about-author" aria-labelledby="author-title">
+      <img class="author-photo" src="/static/author.png" alt="Ofejiro Agbaduta, creator of TimeS forcast" width="176" height="176" loading="lazy" decoding="async">
+      <div class="author-copy">
+        <div class="eyebrow">ABOUT THE AUTHOR</div>
+        <h2 id="author-title">Ofejiro Agbaduta</h2>
+        <span class="author-role">Software Engineer &amp; AI Officer</span>
+        <p>I’m a software engineer based in Benin City, Nigeria, with a bachelor’s degree in Mathematics from Ambrose Alli University. I work as an AI Officer at DeeMoat Hub, developing practical solutions using software, data and artificial intelligence.</p>
+        <p>My work focuses on Python, backend development, machine learning and automation, using tools such as Django, Flask, FastAPI and Pandas. I enjoy applying mathematical ideas to real problems and building useful applications that simplify everyday tasks.</p>
+      </div>
+    </section>
+
+    <div class="about-bottom"><p>Have a series you want to explore?</p><a class="about-primary-link" href="/">Start a forecast <span aria-hidden="true">→</span></a></div>
+    <footer class="page-footer"><span>TimeS forcast <span class="muted">/ About</span></span><span><a href="/">Back to studio</a></span></footer>
+  </main>
+</body>
+</html>

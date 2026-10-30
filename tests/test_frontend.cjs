@@ -5,13 +5,21 @@ const { test } = require('node:test');
 
 // Load the real browser functions with just enough DOM for their initial bindings.
 const elements = {};
+const drawing = new Proxy({}, { get: (target, property) => target[property] ?? (() => {}) });
 const context = vm.createContext({
-  Intl, Date, URLSearchParams, console,
-  document: { getElementById(id) { return elements[id] ||= { value: '', getContext() { return {}; } }; } },
+  Intl, Date, URLSearchParams, console, window: { devicePixelRatio: 1 },
+  getComputedStyle() { return { getPropertyValue() { return '#000000'; } }; },
+  cancelAnimationFrame() {},
+  document: { getElementById(id) { return elements[id] ||= {
+    value: '', dataset: {},
+    getContext() { return drawing; },
+    getBoundingClientRect() { return { width: 800, height: 335 }; },
+    setAttribute() {},
+  }; } },
 });
 const source = fs.readFileSync('static/app.js', 'utf8');
 vm.runInContext(source.slice(0, source.indexOf("$('file-input').addEventListener")), context);
-function run(code) { return JSON.parse(vm.runInContext(`JSON.stringify(${code})`, context)); }
+function run(code) { return JSON.parse(vm.runInContext(`JSON.stringify((${code}) ?? null)`, context)); }
 
 test('date parsing rejects invalid dates and numeric measurements', () => {
   assert.equal(run("dateValue('2024-02-29')"), Date.UTC(2024, 1, 29));
@@ -60,4 +68,70 @@ test('frontend derives plot slices, original row labels, and observed comparison
   assert.deepEqual(data.row_numbers, [1, 2, 3]);
   assert.deepEqual(data.actual_value, [40]);
   assert.deepEqual(data.prediction_x_axis, ['2024-01-04', '2024-01-05']);
+});
+
+test('chart viewport stays inside the data and keeps at least five points', () => {
+  assert.deepEqual(run('clampChartView(-50, -30, 100)'), { start: 0, end: 20 });
+  assert.deepEqual(run('clampChartView(90, 110, 100)'), { start: 79, end: 99 });
+  assert.deepEqual(run('clampChartView(30, 31, 100)'), { start: 30, end: 34 });
+  assert.deepEqual(run('clampChartView(10, 500, 100)'), { start: 0, end: 99 });
+  assert.deepEqual(run('clampChartView(0, 0, 1)'), { start: 0, end: 0 });
+  assert.deepEqual(run('clampChartView(5, 10, 0)'), { start: 0, end: 0 });
+  assert.deepEqual(run('clampChartView(NaN, Infinity, 10)'), { start: 0, end: 9 });
+});
+
+function chartFixture() {
+  vm.runInContext(`
+    state.busy = false; state.hover = null; state.view = null;
+    state.data = {
+      value: Array.from({length: 100}, (_, i) => i),
+      x_axis: Array.from({length: 100}, (_, i) => i + 1),
+      prediction: [100,101,102,103,104,105,106,107,108,109],
+      prediction_x_axis: [101,102,103,104,105,106,107,108,109,110],
+      actual_value: [], lower: [], upper: []
+    };
+  `, context);
+}
+
+test('zoom keeps the cursor anchor at the same data position', () => {
+  chartFixture();
+  run('zoomChart(0.5, 0.25)');
+  const view = run('chartView()');
+  assert.equal(view.end - view.start, 54.5);
+  assert.equal(view.start + (view.end - view.start) * 0.25, 109 * 0.25);
+  assert.equal(elements['zoom-level'].textContent, '2×');
+  assert.equal(elements['chart-position'].disabled, false);
+});
+
+test('pan and reset preserve the series and clamp at both ends', () => {
+  chartFixture();
+  run('setChartView(20, 40)');
+  run('panChart(0.25)');
+  assert.deepEqual(run('chartView()'), { start: 25, end: 45 });
+  run('panChart(-100)');
+  assert.deepEqual(run('chartView()'), { start: 0, end: 20 });
+  run('panChart(100)');
+  assert.deepEqual(run('chartView()'), { start: 89, end: 109 });
+  run('resetChartView()');
+  assert.deepEqual(run('chartView()'), { start: 0, end: 109 });
+  assert.equal(run('state.data.value.length'), 100);
+  assert.equal(elements['chart-position'].disabled, true);
+});
+
+test('forecast focus includes recent history and the full prediction horizon', () => {
+  chartFixture();
+  run('focusForecast()');
+  assert.deepEqual(run('chartView()'), { start: 90, end: 109 });
+  assert.equal(elements['pan-right'].disabled, true);
+  assert.equal(elements['pan-left'].disabled, false);
+});
+
+test('vertical scaling uses the visible values instead of distant outliers', () => {
+  chartFixture();
+  vm.runInContext('state.data.value = Array.from({length: 100}, (_, i) => i < 5 ? 10 + i : 10000);', context);
+  run('setChartView(0, 4)');
+  const middle = run('chartGeometry.y(12)');
+  assert.equal(middle, (25 + 335 - 41) / 2);
+  assert.equal(run('chartGeometry.x(0)'), 54);
+  assert.equal(run('chartGeometry.x(4)'), 778);
 });
