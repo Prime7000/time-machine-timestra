@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { metadata: null, data: null, rawColumns: {}, mode: 'row', busy: false, hover: null, view: null };
+const state = { metadata: null, data: null, rawColumns: {}, helperColumns: [], mode: 'row', busy: false, hover: null, view: null };
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const canvas = $('chart');
@@ -67,8 +67,8 @@ async function prepareMetadata(metadata) {
   state.rawColumns = {};
   const dates = [];
   const ranges = {};
-  // Fetch raw stored values; date detection and ranges belong to the browser.
-  await Promise.all(metadata.plot_against.map(async (column) => {
+  // Date parsing and helper eligibility use raw stored values in the browser.
+  await Promise.all([...metadata.columns, ...metadata.plot_against].map(async (column) => {
     const result = await api(`/get_date?${new URLSearchParams({ date_col: column })}`);
     state.rawColumns[column] = result.dates_value;
   }));
@@ -87,6 +87,8 @@ async function prepareMetadata(metadata) {
 
 function setMetadata(metadata, filename = 'Current dataset.csv') {
   state.metadata = metadata;
+  state.helperColumns = [];
+  $('multivariable').open = false;
   $('file-name').textContent = filename;
   $('file-detail').textContent = 'Click or drop a CSV to replace';
   $('dataset-summary').hidden = false;
@@ -106,7 +108,67 @@ function setMetadata(metadata, filename = 'Current dataset.csv') {
   $('start-row').max = metadata.total_rows;
   $('end-row').max = metadata.total_rows;
   setMode('row');
+  renderHelpers();
   setBusy(false);
+}
+
+function helperChoices(rows) {
+  return (state.metadata?.columns || [])
+    .filter((column) => column !== $('value-column').value)
+    .map((column) => ({
+      column,
+      eligible: rows.some((row) => Number.isFinite(state.rawColumns[column]?.[row])),
+    }));
+}
+
+function updateHelperSummary() {
+  const count = state.helperColumns.length;
+  $('helper-count').textContent = `${count} on`;
+  $('helper-summary').textContent = count
+    ? `${count} historical helper${count === 1 ? '' : 's'} will support the forecast. Collapsing this section keeps your choices.`
+    : 'No helpers selected. Forecasting uses only the value you choose.';
+}
+
+function renderHelpers() {
+  let rows = [];
+  if (state.metadata) {
+    try { rows = selectedRows().rows; } catch { /* A valid history window is needed to enable helpers. */ }
+  }
+  const choices = helperChoices(rows);
+  state.helperColumns = state.helperColumns.filter((column) => choices.some((choice) => choice.column === column && choice.eligible));
+  const container = $('helper-options');
+  container.replaceChildren();
+  for (const { column, eligible } of choices) {
+    const label = document.createElement('label');
+    label.className = 'helper-option';
+    const name = document.createElement('span');
+    name.className = 'helper-name';
+    name.textContent = column;
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.className = 'helper-switch';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-label', `Use ${column} as a helper`);
+    toggle.checked = state.helperColumns.includes(column);
+    toggle.disabled = !eligible;
+    if (!eligible) label.title = 'No numeric values in the selected history. Choose a valid history window.';
+    toggle.addEventListener('change', () => {
+      state.helperColumns = toggle.checked
+        ? [...state.helperColumns, column]
+        : state.helperColumns.filter((selected) => selected !== column);
+      updateHelperSummary();
+      queuePreview();
+    });
+    label.append(name, toggle);
+    container.append(label);
+  }
+  if (!choices.length) {
+    const empty = document.createElement('p');
+    empty.className = 'helper-empty';
+    empty.textContent = state.metadata ? 'No other numeric columns are available as helpers.' : 'Upload a dataset to find helper variables.';
+    container.append(empty);
+  }
+  updateHelperSummary();
 }
 
 function setDateBounds() {
@@ -182,6 +244,7 @@ function requestOptions(prediction = null) {
         x_axis: $('x-column').value || null,
         prediction,
         rows: state.mode === 'date' ? selection.rows : null,
+        helper_columns: state.helperColumns,
       }),
     },
   };
@@ -309,7 +372,7 @@ function updateResults() {
   $('forecast-count').textContent = data?.prediction.length ? `${data.prediction.length} steps ahead` : 'No forecast yet';
   $('chart-title').textContent = data ? `${$('value-column').value}, looking ahead` : 'Your series, looking ahead';
   $('chart-subtitle').textContent = data
-    ? `${number.format(data.selected_rows)} observations · ${$('x-column').value || 'Row number'} axis · Steps equally spaced`
+    ? `${number.format(data.selected_rows)} observations · ${$('x-column').value || 'Row number'} axis · ${state.helperColumns.length} historical helpers · Steps equally spaced`
     : state.metadata ? 'Choose a valid window to preview your history.' : 'Upload a CSV to start exploring.';
   $('chart-range').textContent = data ? `${data.x_axis[0] ?? '—'} → ${data.x_axis.at(-1) ?? '—'}` : 'No history selected';
   $('chart-status').replaceChildren();
@@ -622,10 +685,11 @@ $('forecast-form').addEventListener('submit', (event) => { event.preventDefault(
 for (const mode of ['row', 'date']) $(`${mode}-mode`).addEventListener('click', () => {
   setMode(mode);
   if (mode === 'date') $('x-column').value = $('date-column').value;
+  renderHelpers();
   queuePreview();
 });
-for (const id of ['value-column', 'x-column', 'start-row', 'end-row', 'start-date', 'end-date']) $(id).addEventListener('change', queuePreview);
-$('date-column').addEventListener('change', () => { setDateBounds(); $('x-column').value = $('date-column').value; queuePreview(); });
+for (const id of ['value-column', 'x-column', 'start-row', 'end-row', 'start-date', 'end-date']) $(id).addEventListener('change', () => { renderHelpers(); queuePreview(); });
+$('date-column').addEventListener('change', () => { setDateBounds(); $('x-column').value = $('date-column').value; renderHelpers(); queuePreview(); });
 function horizonChanged() {
   for (const button of document.querySelectorAll('[data-horizon]')) button.classList.toggle('active', button.dataset.horizon === $('horizon').value);
   if (state.data?.prediction.length) queuePreview();
@@ -638,7 +702,7 @@ $('clear').addEventListener('click', async () => {
   setBusy(true);
   try {
     await api('/clear', { method: 'POST' });
-    state.metadata = null; state.data = null; state.rawColumns = {};
+    state.metadata = null; state.data = null; state.rawColumns = {}; state.helperColumns = [];
     $('file-name').textContent = 'Drop your CSV here';
     $('file-detail').textContent = 'or click to browse files';
     $('dataset-summary').hidden = true;
@@ -646,6 +710,8 @@ $('clear').addEventListener('click', async () => {
     fillSelect($('x-column'), [], true);
     fillSelect($('date-column'), []);
     setMode('row');
+    $('multivariable').open = false;
+    renderHelpers();
     showNotice(); updateResults();
   } catch (error) { showNotice(error.message); }
   finally { setBusy(false); }

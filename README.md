@@ -60,6 +60,12 @@ history by row number or date. Row numbers in the interface start at 1, and both
 ends of a range are included. Generate a forecast to view the animated chart,
 prediction interval, observed comparisons, and downloadable forecast CSV.
 
+Expand **Multivariable forecast** to enable numeric helper columns. The target
+column is excluded, and helpers with no usable values in the selected history
+are disabled. Enabled helpers use the same historical rows as the target;
+future helper values are never supplied. Collapsing the section keeps the
+toggles selected. Leave every toggle off for a forecast using only the target.
+
 Scroll over the chart or pinch to zoom, then drag to pan. The controls above the
 chart and the Earlier/Later slider also navigate the visible range. **Forecast**
 focuses on the prediction and recent history; **Reset view**, double-click, or

@@ -7,7 +7,7 @@ import pandas as pd
 from timestral import TimestralForecaster
 import torch
 from contextlib import asynccontextmanager
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 
 
@@ -35,6 +35,7 @@ class Plot(BaseModel):
     x_axis: str | None = None
     prediction: int | None = None
     rows: list[int] | None = None
+    helper_columns: list[str] = Field(default_factory=list)
 
 
 @app.get("/")
@@ -92,6 +93,13 @@ def plot_values(request: Request, values: Plot, start_num: int | None = None, en
         raise HTTPException(status_code=400, detail="Select a numeric value column")
     if values.x_axis and values.x_axis not in df.columns:
         raise HTTPException(status_code=400, detail=f"X-axis column '{values.x_axis}' was not found")
+    if len(set(values.helper_columns)) != len(values.helper_columns):
+        raise HTTPException(status_code=400, detail="Select each helper column only once")
+    for column in values.helper_columns:
+        if column == values.value:
+            raise HTTPException(status_code=400, detail="The value being predicted cannot also be a helper")
+        if column not in df.columns or not pd.api.types.is_numeric_dtype(df[column]):
+            raise HTTPException(status_code=400, detail=f"Helper column '{column}' must be a numeric column in the dataset")
 
     prediction = []
     lower = []
@@ -102,18 +110,31 @@ def plot_values(request: Request, values: Plot, start_num: int | None = None, en
         if values.rows is not None:
             if not values.rows or min(values.rows) < 0 or max(values.rows) >= len(df):
                 raise HTTPException(status_code=400, detail="Selected rows are outside the dataset")
-            context = df[values.value].iloc[values.rows]
+            history = df.iloc[values.rows]
         else:
             start = start_num if start_num is not None else 0
             end = end_num if end_num is not None else len(df)
             if start < 0 or start >= end or end > len(df):
                 raise HTTPException(status_code=400, detail="Select a valid row range")
-            context = df[values.value].iloc[start:end]
+            history = df.iloc[start:end]
+        context = history[values.value]
         if context.isna().all() or context.isin([float("inf"), float("-inf")]).any():
             raise HTTPException(status_code=400, detail="The selected history needs finite numeric values")
 
+        past_covariates = None
+        if values.helper_columns:
+            helpers = history[values.helper_columns]
+            if helpers.isna().all().any() or helpers.isin([float("inf"), float("-inf")]).any().any():
+                raise HTTPException(status_code=400, detail="Each helper needs finite numeric values in the selected history")
+            # Use exactly the same historical rows and order as the target.
+            past_covariates = helpers.to_numpy(dtype=float, copy=True).T[None, :, :]
+
         model = request.app.state.ml_model
-        forecast = model.forecast(context.to_numpy(dtype=float, copy=True), prediction_length=values.prediction)
+        forecast = model.forecast(
+            context.to_numpy(dtype=float, copy=True),
+            prediction_length=values.prediction,
+            past_covariates=past_covariates,
+        )
         prediction = forecast.median.flatten().tolist()
         lower = forecast.quantile(0.1).flatten().tolist()
         upper = forecast.quantile(0.9).flatten().tolist()

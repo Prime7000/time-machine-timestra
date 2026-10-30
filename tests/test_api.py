@@ -19,8 +19,8 @@ def dataset(tmp_path, monkeypatch):
     main.upload_doc(UploadFile(filename="series.csv", file=BytesIO(CSV)))
     calls = []
 
-    def forecast(context, prediction_length):
-        calls.append((context.copy(), prediction_length))
+    def forecast(context, prediction_length, past_covariates=None):
+        calls.append((context.copy(), prediction_length, None if past_covariates is None else past_covariates.copy()))
         median = torch.arange(prediction_length, dtype=torch.float32) + context[-1]
         quantiles = torch.stack([median - 2, median, median + 2], dim=-1)[None, None]
         return Forecast(quantiles, (0.1, 0.5, 0.9))
@@ -47,6 +47,7 @@ def test_only_selected_rows_reach_forecaster(dataset):
     assert data["lower"] == [28, 29, 30]
     assert data["upper"] == [32, 33, 34]
     assert data["value"] == [10, 20, 30, 40]
+    assert calls[0][2] is None
 
 
 def test_frontend_can_pass_date_selected_indices_in_chronological_order(dataset):
@@ -97,3 +98,52 @@ def test_raw_column_endpoint_and_clear(dataset):
     main.clear()
     with pytest.raises(HTTPException):
         main.get("date")
+
+
+HELPERS_CSV = b"date,value,temp,wind,label\n2024-01-01,10,100,1,a\n2024-01-02,20,200,2,b\n2024-01-03,30,300,3,c\n2024-01-04,40,99999,99999,d\n"
+
+
+def test_helpers_use_only_the_target_history_rows_without_future_leakage(dataset):
+    request, calls = dataset
+    main.upload_doc(UploadFile(filename="helpers.csv", file=BytesIO(HELPERS_CSV)))
+    data = main.plot_values(request, main.Plot(value="value", prediction=2, helper_columns=["temp", "wind"]), start_num=1, end_num=3)
+    np.testing.assert_array_equal(calls[0][0], [20, 30])
+    np.testing.assert_array_equal(calls[0][2], [[[200, 300], [2, 3]]])
+    assert data["prediction"] == [30, 31]
+
+
+def test_helpers_follow_frontend_date_order_and_selected_column_order(dataset):
+    request, calls = dataset
+    main.upload_doc(UploadFile(filename="helpers.csv", file=BytesIO(HELPERS_CSV)))
+    main.plot_values(request, main.Plot(value="value", prediction=2, rows=[2, 0], helper_columns=["wind", "temp"]))
+    np.testing.assert_array_equal(calls[0][0], [30, 10])
+    np.testing.assert_array_equal(calls[0][2], [[[3, 1], [300, 100]]])
+
+
+@pytest.mark.parametrize("helpers", [["value"], ["missing"], ["label"], ["date"], ["temp", "temp"]])
+def test_invalid_helper_columns_are_rejected_before_inference(dataset, helpers):
+    request, calls = dataset
+    main.upload_doc(UploadFile(filename="helpers.csv", file=BytesIO(HELPERS_CSV)))
+    with pytest.raises(HTTPException) as error:
+        main.plot_values(request, main.Plot(value="value", prediction=2, helper_columns=helpers))
+    assert error.value.status_code == 400
+    assert calls == []
+
+
+@pytest.mark.parametrize("helper_values", ["NA\nNA", "inf\n2", "1\n-inf"])
+def test_unusable_helper_history_is_rejected(dataset, helper_values):
+    request, calls = dataset
+    lines = helper_values.splitlines()
+    csv = f"value,helper\n10,{lines[0]}\n20,{lines[1]}\n30,3\n".encode()
+    main.upload_doc(UploadFile(filename="helpers.csv", file=BytesIO(csv)))
+    with pytest.raises(HTTPException):
+        main.plot_values(request, main.Plot(value="value", prediction=2, helper_columns=["helper"]), end_num=2)
+    assert calls == []
+
+
+def test_helpers_can_have_missing_values_and_invalid_future_rows_are_not_used(dataset):
+    request, calls = dataset
+    csv = b"value,helper\n10,1\n20,NA\n30,3\n40,inf\n"
+    main.upload_doc(UploadFile(filename="helpers.csv", file=BytesIO(csv)))
+    main.plot_values(request, main.Plot(value="value", prediction=2, helper_columns=["helper"]), end_num=3)
+    np.testing.assert_array_equal(calls[0][2], [[[1, np.nan, 3]]])

@@ -7,8 +7,8 @@
   <meta name="description" content="TimeS forcast turns your time-series CSV data into interactive forecasts.">
   <title>TimeS forcast · Forecast studio</title>
   <script src="/static/theme.js?v=times-forcast"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=times-forcast">
-  <script src="/static/app.js?v=times-forcast" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=helpers">
+  <script src="/static/app.js?v=helpers" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -39,6 +39,12 @@
             <div id="row-fields" class="field-pair"><div><label for="start-row">From row</label><input id="start-row" type="number" min="1" step="1" value="1" required></div><div><label for="end-row">Through row</label><input id="end-row" type="number" min="1" step="1" value="1" required></div></div>
             <div id="date-fields" hidden><label for="date-column">Date column</label><select id="date-column"></select><div class="field-pair"><div><label for="start-date">From date</label><input id="start-date" type="date"></div><div><label for="end-date">Through date</label><input id="end-date" type="date"></div></div></div>
             <p class="helper" id="window-hint">Row numbers start at 1. Both ends are included.</p>
+            <details id="multivariable" class="helper-section">
+              <summary><span>Multivariable forecast</span><span id="helper-count" class="helper-count">0 on</span></summary>
+              <p class="helper-description">Use other numeric columns to help predict your selected value. Only their historical values are used.</p>
+              <div id="helper-options" class="helper-options"><p class="helper-empty">Upload a dataset to find helper variables.</p></div>
+              <p id="helper-summary" class="helper-description" aria-live="polite">No helpers selected. Forecasting uses only the value you choose.</p>
+            </details>
             <label for="horizon">Forecast horizon <span class="field-hint">Steps ahead</span></label><div class="horizon-input"><input id="horizon" type="number" value="24" min="1" max="1024" step="1" required><span>steps</span></div>
             <div class="presets" aria-label="Horizon presets"><button type="button" data-horizon="12">12</button><button type="button" data-horizon="24" class="active">24</button><button type="button" data-horizon="48">48</button><button type="button" data-horizon="96">96</button></div>
             <button id="run" type="submit" class="primary-button"><span aria-hidden="true">✧</span> Generate forecast <span aria-hidden="true">→</span></button>

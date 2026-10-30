@@ -6,16 +6,25 @@ const { test } = require('node:test');
 // Load the real browser functions with just enough DOM for their initial bindings.
 const elements = {};
 const drawing = new Proxy({}, { get: (target, property) => target[property] ?? (() => {}) });
+function element() {
+  return {
+    value: '', dataset: {}, children: [], listeners: {}, attributes: {},
+    getContext() { return drawing; },
+    getBoundingClientRect() { return { width: 800, height: 335 }; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; },
+    addEventListener(name, listener) { this.listeners[name] = listener; },
+  };
+}
 const context = vm.createContext({
   Intl, Date, URLSearchParams, console, window: { devicePixelRatio: 1 },
   getComputedStyle() { return { getPropertyValue() { return '#000000'; } }; },
   cancelAnimationFrame() {},
-  document: { getElementById(id) { return elements[id] ||= {
-    value: '', dataset: {},
-    getContext() { return drawing; },
-    getBoundingClientRect() { return { width: 800, height: 335 }; },
-    setAttribute() {},
-  }; } },
+  document: {
+    getElementById(id) { return elements[id] ||= element(); },
+    createElement() { return element(); },
+  },
 });
 const source = fs.readFileSync('static/app.js', 'utf8');
 vm.runInContext(source.slice(0, source.indexOf("$('file-input').addEventListener")), context);
@@ -134,4 +143,69 @@ test('vertical scaling uses the visible values instead of distant outliers', () 
   assert.equal(middle, (25 + 335 - 41) / 2);
   assert.equal(run('chartGeometry.x(0)'), 54);
   assert.equal(run('chartGeometry.x(4)'), 778);
+});
+
+test('helper choices exclude the target and check numeric values in the selected history', () => {
+  vm.runInContext(`
+    state.metadata = {columns: ['humidity', 'temperature', 'wind', 'pressure']};
+    state.rawColumns = {
+      humidity: [40, 50, 60], temperature: [10, null, 12],
+      wind: [null, null, 3], pressure: [null, null, null]
+    };
+    $('value-column').value = 'humidity';
+  `, context);
+  assert.deepEqual(run('helperChoices([0, 1])'), [
+    {column: 'temperature', eligible: true},
+    {column: 'wind', eligible: false},
+    {column: 'pressure', eligible: false},
+  ]);
+  assert.equal(run('helperChoices([2])[1].eligible'), true);
+  assert.deepEqual(run('helperChoices([]).map(choice => choice.eligible)'), [false, false, false]);
+});
+
+test('forecast requests include exactly the helper columns selected in the frontend', () => {
+  vm.runInContext(`
+    state.metadata = {total_rows: 5}; state.mode = 'row';
+    $('start-row').value = '1'; $('end-row').value = '3';
+    state.helperColumns = ['temperature', 'wind'];
+  `, context);
+  assert.deepEqual(JSON.parse(run('requestOptions(14)').options.body).helper_columns, ['temperature', 'wind']);
+  vm.runInContext('state.helperColumns = [];', context);
+  assert.deepEqual(JSON.parse(run('requestOptions(14)').options.body).helper_columns, []);
+});
+
+test('rendered helper switches exclude the target and disable unusable columns', () => {
+  vm.runInContext(`
+    state.metadata = {total_rows: 3, columns: ['humidity', 'temperature', 'pressure']};
+    state.rawColumns = {humidity: [40,50,60], temperature: [10,11,12], pressure: [null,null,null]};
+    state.helperColumns = ['humidity', 'temperature', 'pressure']; state.mode = 'row';
+    $('value-column').value = 'humidity'; $('start-row').value = '1'; $('end-row').value = '3';
+    renderHelpers();
+  `, context);
+  const labels = elements['helper-options'].children;
+  assert.deepEqual(labels.map(label => label.children[0].textContent), ['temperature', 'pressure']);
+  assert.equal(labels[0].children[1].attributes.role, 'switch');
+  assert.equal(labels[0].children[1].checked, true);
+  assert.equal(labels[1].children[1].disabled, true);
+  assert.deepEqual(run('state.helperColumns'), ['temperature']);
+  assert.equal(elements['helper-count'].textContent, '1 on');
+});
+
+test('switch changes update helper selection and remove a newly selected target', () => {
+  vm.runInContext('const originalQueuePreview = queuePreview; queuePreview = () => {};', context);
+  try {
+    const toggle = elements['helper-options'].children[0].children[1];
+    toggle.checked = false;
+    toggle.listeners.change();
+    assert.deepEqual(run('state.helperColumns'), []);
+    toggle.checked = true;
+    toggle.listeners.change();
+    assert.deepEqual(run('state.helperColumns'), ['temperature']);
+    vm.runInContext("$('value-column').value = 'temperature'; renderHelpers();", context);
+    assert.deepEqual(run('state.helperColumns'), []);
+    assert.equal(elements['helper-count'].textContent, '0 on');
+    assert.deepEqual(elements['helper-options'].children.map(label => label.children[0].textContent), ['humidity', 'pressure']);
+  } finally {
+    vm.runInContext('queuePreview = originalQueuePreview;', context);
+  }
 });
