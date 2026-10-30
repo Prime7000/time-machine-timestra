@@ -62,6 +62,7 @@ def upload_doc(file: UploadFile):
     allowed_types = ["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32", "float64"]
     allowed_col = []
     plot_against = []
+    dates_col = []
 
     for c in col:
         t = df[c].dtype
@@ -70,14 +71,28 @@ def upload_doc(file: UploadFile):
         else:
             plot_against.append(c)
 
+        # check for dates col
+        converted = pd.to_datetime(
+            df[c],
+            format="%Y-%m-%d",
+            errors="coerce",
+        )
+
+        if converted.notna().all():
+            dates_col.append(c)
+            df.to_csv(file_path, index=False)
+            print("This column is date compatible")
+        else:
+            print("This column is not date compatible")
+
     total_rows = df.shape[0]
 
     return {
         "status":"ok",
         "columns": allowed_col,
         "plot_against": plot_against,
-        "total_rows": total_rows
-
+        "total_rows": total_rows,
+        "date_col": dates_col
     }
 
 @app.post("/plot_values")
@@ -119,6 +134,26 @@ def plot_values(values: Plot, start_num: int | None = None, end_num: int | None 
         "value": value,
         "x_axis": x_axis
     }
+
+@app.get("/get_date")
+def get(date_col: str):
+    file_path =  Path("app_data/uploads/disposable.csv")
+
+    if not file_path.exists():
+            raise HTTPException(
+                status_code=400,
+                detail="No data to fetch date from"
+            )
+
+    df = pd.read_csv(file_path)
+    data = df[date_col].to_list()
+
+    return{
+        "dates_value":data
+    }
+
+    
+
 
 @app.post("/clear")
 def clear():
